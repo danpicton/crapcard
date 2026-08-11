@@ -185,14 +185,12 @@ func publicUser(u *User) map[string]any {
 	}
 }
 
+// writeJSON and writeError are package-local names for the shared httpx
+// helpers, keeping the handler bodies terse.
 func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(v); err != nil {
-		slog.Error("write json response", "err", err)
-	}
+	httpx.WriteJSON(w, status, v)
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]any{"error": msg})
+	httpx.WriteError(w, status, msg)
 }
