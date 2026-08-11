@@ -1,0 +1,10 @@
+DROP INDEX IF EXISTS idx_review_log_user;
+DROP INDEX IF EXISTS idx_review_log_card;
+DROP TABLE IF EXISTS review_log;
+DROP INDEX IF EXISTS idx_cards_queue;
+DROP INDEX IF EXISTS idx_cards_note_template;
+DROP TABLE IF EXISTS cards;
+DROP TABLE IF EXISTS note_fields;
+DROP INDEX IF EXISTS idx_notes_user;
+DROP INDEX IF EXISTS idx_notes_deck;
+DROP TABLE IF EXISTS notes;
