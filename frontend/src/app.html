@@ -1,0 +1,705 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<link rel="icon" type="image/svg+xml" href="%sveltekit.assets%/favicon.svg" />
+		<!-- interactive-widget=resizes-content: shrink the layout viewport (and dvh)
+		     when the on-screen keyboard opens, so bottom-anchored UI (mobile format
+		     bar) sits on top of the keyboard instead of underneath it. -->
+		<meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content" />
+		<meta name="theme-color" content="#faf8f4" />
+		<link rel="manifest" href="%sveltekit.assets%/manifest.json" />
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
+		<link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:ital,wght@0,400..700;1,400..700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Archivo+Black&family=Work+Sans:wght@400;500;600;700&family=Space+Mono:wght@400;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&family=DM+Sans:wght@400;500;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet" />
+		<style>
+			/* Remove default browser margin so the app fills the viewport exactly.
+			   overflow is NOT set here — the main .app container handles its own
+			   clipping so that sub-screens (settings, admin) can scroll freely. */
+			html, body { margin: 0; padding: 0; height: 100%; }
+
+			/* ── Font families ───────────────────────────────────── */
+			:root {
+				--serif: "Crimson Pro", "Source Serif Pro", Georgia, serif;
+				--sans:  "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+				--mono:  "JetBrains Mono", ui-monospace, monospace;
+			}
+
+			/* ── CSS design tokens ───────────────────────────────── */
+			:root {
+				--bg:         #faf8f4;
+				--bg-alt:     #f4f1ea;
+				--bg-toolbar: #ffffff;
+				--bg-hover:   #efe9da;
+				--bg-select:  #efe9da;
+				--bg-active:  #e4dccf;
+
+				--border:     #e8e2d6;
+				--border-md:  #d9d2c4;
+				--border-hi:  #c8b89e;
+
+				--text:       #1a1612;
+				--text-2:     #3a332a;
+				--text-3:     #7a7267;
+				--text-4:     #a89f92;
+
+				--accent:     #e45c3a;
+				--accent-dk:  #c94a28;
+				--accent-lt:  rgba(228, 92, 58, 0.08);
+				--accent-tx:  #c94a28;
+
+				--danger:     #c2574a;
+				--danger-bg:  #fbeee9;
+				--danger-bd:  #e8c0b4;
+
+				--focus-ring: rgba(228, 92, 58, 0.2);
+				--shadow:     0 4px 16px rgba(0, 0, 0, 0.10);
+
+				/* ── Gesture / sync semantic colours (fixed, no dark variant) ─ */
+				--gesture-pin:     #C99A2E;
+				--gesture-star:    #B9923A;
+				--gesture-archive: #5E8E6E;
+				--gesture-delete:  #C0432A;
+				--gesture-lock:    #566B7B;
+				--sync-synced:     #5E8E6E;
+				--sync-offline:    #C0432A;
+			}
+
+			[data-theme="dark"] {
+				--bg:         #141210;
+				--bg-alt:     #181613;
+				--bg-toolbar: #1c1a17;
+				--bg-hover:   #242019;
+				--bg-select:  #242019;
+				--bg-active:  #2e2a22;
+
+				--border:     #2a2621;
+				--border-md:  #3a332a;
+				--border-hi:  #5a4f3a;
+
+				--text:       #e9e4da;
+				--text-2:     #c4bbaf;
+				--text-3:     #8a837a;
+				--text-4:     #55504a;
+
+				--accent:     #e45c3a;
+				--accent-dk:  #f07050;
+				--accent-lt:  rgba(228, 92, 58, 0.12);
+				--accent-tx:  #f08060;
+
+				--danger:     #d97a6a;
+				--danger-bg:  #3a1a14;
+				--danger-bd:  #7f3a2a;
+
+				--focus-ring: rgba(228, 92, 58, 0.25);
+				--shadow:     0 4px 24px rgba(0, 0, 0, 0.5);
+			}
+
+			/* ── Nintendo 2001 — brushed-periwinkle console chrome ─────────
+			   The web rendered as console hardware: cool periwinkle metal
+			   plates, chrome-indigo bevel seams, carbon-navy command layer,
+			   and warm colour rationed strictly for action (signal orange /
+			   amber / nav gold). Era-faithful Arial voice throughout. */
+			[data-theme="console-2001"] {
+				/* The era's web-safe reality: Arial everywhere */
+				--serif: Arial, Helvetica, sans-serif;
+				--sans:  Arial, Helvetica, sans-serif;
+				--mono:  "Courier New", ui-monospace, monospace;
+
+				--bg:         #7a8aba;   /* periwinkle metallic canvas */
+				--bg-alt:     #8ba1d4;   /* light periwinkle raised plates */
+				--bg-toolbar: #9fbee7;   /* pale-sky strip */
+				--bg-hover:   #9fbee7;
+				--bg-select:  #acace7;   /* pale lavender */
+				--bg-active:  #c0d5e6;   /* pale ice */
+
+				--border:     #3d4f97;   /* chrome-indigo bevel seams */
+				--border-md:  #3d4f97;
+				--border-hi:  #21242e;   /* carbon navy */
+
+				--text:       #21242e;   /* carbon navy on light chrome */
+				--text-2:     #21242e;
+				--text-3:     #3d4f97;   /* chrome-indigo secondary labels */
+				--text-4:     #60619c;   /* muted indigo, recessed chrome */
+
+				--accent:     #f68d1f;   /* signal orange — every "forward" cue */
+				--accent-dk:  #e48600;   /* nav gold — pressed state */
+				--accent-lt:  rgba(236, 171, 55, 0.25);  /* amber wash */
+				--accent-tx:  #21242e;
+
+				--danger:     #e60012;   /* Nintendo red doubles as alert */
+				--danger-bg:  #f6ccd0;
+				--danger-bd:  #e60012;
+
+				--focus-ring: rgba(246, 141, 31, 0.4);
+				/* Hard offset shadow — no soft Material blur in this system */
+				--shadow:     3px 3px 0 rgba(33, 36, 46, 0.35);
+			}
+
+			/* Brushed-metal faceplate: faint vertical machining lines */
+			[data-theme="console-2001"] body {
+				background-image: repeating-linear-gradient(
+					90deg,
+					rgba(255, 255, 255, 0.05) 0px, rgba(255, 255, 255, 0.05) 1px,
+					transparent 1px, transparent 3px
+				);
+			}
+
+			/* Silkscreen-legend voice: uppercase Arial Bold with tracking on
+			   every control; beveled-chip depth (bright top edge, hard indigo
+			   shadow line beneath) instead of flat fills. */
+			[data-theme="console-2001"] button {
+				text-transform: uppercase;
+				letter-spacing: 0.5px;
+				font-weight: 700;
+				border-radius: 2px;
+				box-shadow:
+					inset 0 1px 0 rgba(255, 255, 255, 0.5),
+					inset 0 -1px 0 rgba(33, 36, 46, 0.3),
+					0 1px 0 #3d4f97;
+			}
+			[data-theme="console-2001"] button:active {
+				box-shadow:
+					inset 0 1px 0 rgba(33, 36, 46, 0.3),
+					inset 0 -1px 0 rgba(255, 255, 255, 0.35);
+			}
+
+			/* Inputs are inset white plates with a chrome-indigo recess edge.
+			   The note-title input is exempt — it's a headline sitting on the
+			   chrome, not a form field, so it stays transparent. */
+			[data-theme="console-2001"] input:not([type="checkbox"]):not([type="radio"]):not(.title-input),
+			[data-theme="console-2001"] textarea,
+			[data-theme="console-2001"] select {
+				background-color: #ffffff;
+				border-radius: 2px;
+				box-shadow: inset 1px 1px 0 rgba(61, 79, 151, 0.3);
+			}
+
+			/* Box-art wordmarks: white display type with a heavy carbon
+			   outline and hard indigo drop shadow — never flat. */
+			/* html prefix outranks the component stylesheets, which load after
+			   this inline block and would otherwise win the specificity tie */
+			html[data-theme="console-2001"] .wordmark,
+			html[data-theme="console-2001"] .mob-wordmark,
+			html[data-theme="console-2001"] .page-title,
+			html[data-theme="console-2001"] .mob-page-title {
+				color: #ffffff;
+				font-style: italic;
+				font-weight: 900;
+				letter-spacing: 0;
+				-webkit-text-stroke: 1px #21242e;
+				paint-order: stroke fill;
+				text-shadow: 2px 2px 0 #3d4f97;
+			}
+
+			/* Panel headers get the uppercase chrome-label treatment */
+			[data-theme="console-2001"] h2 {
+				text-transform: uppercase;
+				letter-spacing: 0.5px;
+			}
+
+			/* Editor keeps the Arial-era voice */
+			[data-theme="console-2001"] .ProseMirror,
+			[data-theme="console-2001"] .ProseMirror h1,
+			[data-theme="console-2001"] .ProseMirror h2,
+			[data-theme="console-2001"] .ProseMirror h3 {
+				font-family: Arial, Helvetica, sans-serif;
+			}
+
+			/* ── Rosso — cinematic near-black editorial ────────────────────
+			   Luxury-magazine restraint: a warm near-black canvas (never pure
+			   black), white display type at weight 500 (never bold), grey
+			   running text, and a single scarce accent — racing red — spent
+			   only on primary actions. Depth is brightness-step, not shadow;
+			   corners are sharp; CTA labels run uppercase with wide tracking. */
+			[data-theme="rosso"] {
+				/* Single sans family across every text role (Inter stands in
+				   for the licensed face; already loaded for the base theme) */
+				--serif: "Inter", -apple-system, system-ui, sans-serif;
+				--sans:  "Inter", -apple-system, system-ui, sans-serif;
+
+				--bg:         #181818;   /* near-black canvas, slight warmth */
+				--bg-alt:     #202020;   /* one brightness step up */
+				--bg-toolbar: #303030;   /* canvas-elevated */
+				--bg-hover:   #303030;
+				--bg-select:  #303030;
+				--bg-active:  #3c3c3c;
+
+				--border:     #303030;   /* 1px hairline on dark */
+				--border-md:  #3c3c3c;
+				--border-hi:  #666666;
+
+				--text:       #ffffff;   /* ink */
+				--text-2:     #969696;   /* default running text */
+				--text-3:     #8f8f8f;   /* muted-soft */
+				--text-4:     #666666;   /* muted captions */
+
+				--accent:     #da291c;   /* racing red — used scarcely */
+				--accent-dk:  #b01e0a;   /* press state */
+				--accent-lt:  rgba(218, 41, 28, 0.12);
+				--accent-tx:  #da291c;
+
+				--danger:     #f13a2c;   /* validation warning */
+				--danger-bg:  #2a1210;
+				--danger-bd:  #7a221b;
+
+				--focus-ring: rgba(246, 229, 0, 0.4);  /* brand yellow focus ring */
+				/* Single soft shadow tier — no Material elevation ladder */
+				--shadow:     0 4px 8px rgba(0, 0, 0, 0.4);
+			}
+
+			/* ── Bianco — the same editorial system on its white canvas ────
+			   The light-band counterpart to Rosso: white editorial surfaces,
+			   near-black ink, soft-grey alternating panels, hairlines-on-light,
+			   and the identical scarce racing-red accent and CTA voice. */
+			[data-theme="bianco"] {
+				--serif: "Inter", -apple-system, system-ui, sans-serif;
+				--sans:  "Inter", -apple-system, system-ui, sans-serif;
+
+				--bg:         #ffffff;   /* white editorial canvas */
+				--bg-alt:     #f7f7f7;   /* soft alternating band */
+				--bg-toolbar: #f7f7f7;
+				--bg-hover:   #f7f7f7;
+				--bg-select:  #ebebeb;   /* strong light surface */
+				--bg-active:  #ebebeb;
+
+				--border:     #ebebeb;   /* soft hairline */
+				--border-md:  #d2d2d2;   /* 1px hairline on light */
+				--border-hi:  #969696;
+
+				--text:       #181818;   /* ink on light */
+				--text-2:     #303030;
+				--text-3:     #666666;   /* muted captions */
+				--text-4:     #969696;
+
+				--accent:     #da291c;   /* racing red — used scarcely */
+				--accent-dk:  #b01e0a;   /* press state */
+				--accent-lt:  rgba(218, 41, 28, 0.08);
+				--accent-tx:  #b01e0a;
+
+				--danger:     #f13a2c;
+				--danger-bg:  #fdeae8;
+				--danger-bd:  #f0b3ac;
+
+				--focus-ring: rgba(246, 229, 0, 0.55);  /* brand yellow focus ring */
+				--shadow:     0 4px 8px rgba(0, 0, 0, 0.1);  /* single soft tier */
+			}
+
+			/* CTA voice: uppercase, 1.4px tracking, sharp 0px corners */
+			[data-theme="rosso"] button,
+			[data-theme="bianco"] button {
+				text-transform: uppercase;
+				letter-spacing: 1.4px;
+				font-weight: 700;
+				border-radius: 0;
+			}
+
+			/* Form inputs are the one place a small radius is allowed (4px) */
+			[data-theme="rosso"] input:not([type="checkbox"]):not([type="radio"]),
+			[data-theme="rosso"] textarea,
+			[data-theme="rosso"] select,
+			[data-theme="bianco"] input:not([type="checkbox"]):not([type="radio"]),
+			[data-theme="bianco"] textarea,
+			[data-theme="bianco"] select {
+				border-radius: 4px;
+			}
+
+			/* Display type stays at weight 500 with negative tracking —
+			   editorial confidence, never bold. html prefix outranks the
+			   component stylesheets that load after this inline block. */
+			html[data-theme="rosso"] .wordmark,
+			html[data-theme="rosso"] .mob-wordmark,
+			html[data-theme="rosso"] .page-title,
+			html[data-theme="rosso"] .mob-page-title,
+			html[data-theme="bianco"] .wordmark,
+			html[data-theme="bianco"] .mob-wordmark,
+			html[data-theme="bianco"] .page-title,
+			html[data-theme="bianco"] .mob-page-title {
+				font-weight: 500;
+				font-style: normal;
+				letter-spacing: -0.02em;
+			}
+			html[data-theme="rosso"] h2,
+			html[data-theme="bianco"] h2 {
+				font-weight: 500;
+				letter-spacing: -0.01em;
+			}
+
+			/* Editor follows the single-sans editorial voice */
+			[data-theme="rosso"] .ProseMirror,
+			[data-theme="rosso"] .ProseMirror h1,
+			[data-theme="rosso"] .ProseMirror h2,
+			[data-theme="rosso"] .ProseMirror h3,
+			[data-theme="bianco"] .ProseMirror,
+			[data-theme="bianco"] .ProseMirror h1,
+			[data-theme="bianco"] .ProseMirror h2,
+			[data-theme="bianco"] .ProseMirror h3 {
+				font-family: "Inter", -apple-system, system-ui, sans-serif;
+			}
+			[data-theme="rosso"] .ProseMirror h1,
+			[data-theme="bianco"] .ProseMirror h1 {
+				font-weight: 500;
+				letter-spacing: -0.02em;
+			}
+			[data-theme="rosso"] .ProseMirror h2,
+			[data-theme="rosso"] .ProseMirror h3,
+			[data-theme="bianco"] .ProseMirror h2,
+			[data-theme="bianco"] .ProseMirror h3 {
+				font-weight: 500;
+			}
+
+			/* ── Rawblock — brutalist black-on-white ───────────────────────
+			   Anti-design: interfaces stripped to their structural bones.
+			   Pure black on pure white, thick borders instead of shadows,
+			   zero rounding, hyperlink blue reserved for links, Archivo Black
+			   headlines over Work Sans body and Space Mono inputs. If it
+			   looks too "designed", strip it back further. */
+			[data-theme="rawblock"] {
+				/* Archivo Black is reserved for the large display marks (see
+				   the wordmark rule below) — at UI heading sizes it sets too
+				   dense, so the heading slot runs Work Sans bold instead */
+				--serif: "Work Sans", -apple-system, sans-serif;
+				--sans:  "Work Sans", -apple-system, sans-serif;
+				--mono:  "Space Mono", ui-monospace, monospace;
+
+				--bg:         #ffffff;   /* surface base */
+				--bg-alt:     #ffffff;   /* hierarchy comes from borders, not tints */
+				--bg-toolbar: #ffffff;
+				--bg-hover:   #f0f0f0;   /* surface-sunken */
+				--bg-select:  #e8e8e8;
+				--bg-active:  #e8e8e8;
+
+				--border:     #000000;   /* borders ARE the design */
+				--border-md:  #000000;
+				--border-hi:  #000000;
+
+				--text:       #000000;
+				--text-2:     #000000;
+				--text-3:     #555555;
+				--text-4:     #999999;   /* disabled-adjacent grey */
+
+				--accent:     #000000;   /* primary action = black block, white text */
+				--accent-dk:  #333333;
+				--accent-lt:  #f0f0f0;
+				--accent-tx:  #000000;
+
+				--danger:     #ff0000;   /* pure red */
+				--danger-bg:  #ffffff;
+				--danger-bd:  #ff0000;
+
+				--focus-ring: rgba(0, 0, 0, 0.4);
+				--shadow:     none;      /* no shadows — ever */
+			}
+
+			/* Buttons: square blocks, uppercase with 2px tracking */
+			[data-theme="rawblock"] button {
+				text-transform: uppercase;
+				letter-spacing: 2px;
+				font-weight: 600;
+				border-radius: 0;
+			}
+			/* The signature full inversion on the primary action: black block
+			   flips to white-on-black-border. html prefix outranks component
+			   stylesheets, which load after this inline block. */
+			html[data-theme="rawblock"] .btn-primary {
+				border: 3px solid #000000;
+			}
+			html[data-theme="rawblock"] .btn-primary:hover:not(:disabled) {
+				background: #ffffff;
+				color: #000000;
+			}
+
+			/* Inputs: sunken grey blocks with thick black borders, Space Mono.
+			   The note-title input is exempt — it reads as a headline, not a
+			   form field, so the weight goes on its containing bar instead. */
+			[data-theme="rawblock"] input:not([type="checkbox"]):not([type="radio"]):not(.title-input),
+			[data-theme="rawblock"] textarea,
+			[data-theme="rawblock"] select {
+				background-color: #f0f0f0;
+				border: 3px solid #000000;
+				border-radius: 0;
+				font-family: "Space Mono", ui-monospace, monospace;
+			}
+			/* The heavy border goes on the title bar itself */
+			html[data-theme="rawblock"] .editor-header {
+				border-bottom: 5px solid #000000;
+			}
+
+			/* Hyperlink blue is reserved for bare links (styled anchors keep
+			   their component colours via higher-specificity class rules) */
+			[data-theme="rawblock"] a {
+				color: #0000ff;
+			}
+
+			/* Display marks (typemark, page titles) keep Archivo Black at its
+			   single native weight — synthetic bolding just muddies it */
+			html[data-theme="rawblock"] .wordmark,
+			html[data-theme="rawblock"] .mob-wordmark,
+			html[data-theme="rawblock"] .page-title,
+			html[data-theme="rawblock"] .mob-page-title {
+				font-family: "Archivo Black", "Arial Black", sans-serif;
+				font-weight: 400;
+				font-style: normal;
+				letter-spacing: 0;
+			}
+			html[data-theme="rawblock"] h2 {
+				font-weight: 700;
+				letter-spacing: 0;
+			}
+
+			/* Editor: Work Sans throughout — bold headings, regular body */
+			[data-theme="rawblock"] .ProseMirror,
+			[data-theme="rawblock"] .ProseMirror h1,
+			[data-theme="rawblock"] .ProseMirror h2,
+			[data-theme="rawblock"] .ProseMirror h3 {
+				font-family: "Work Sans", sans-serif;
+			}
+			[data-theme="rawblock"] .ProseMirror h1,
+			[data-theme="rawblock"] .ProseMirror h2,
+			[data-theme="rawblock"] .ProseMirror h3 {
+				font-weight: 700;
+				letter-spacing: 0;
+			}
+			[data-theme="rawblock"] .ProseMirror blockquote {
+				border-left: 5px solid #000000 !important;
+				font-style: normal;
+			}
+
+			/* ── Verdana — calm clinical navy and sage ─────────────────────
+			   Digital-health reassurance: a soft slate-white canvas, white
+			   card surfaces, deep navy for primary actions and headers, sage
+			   green reserved for links and positive highlights, gentle 8px
+			   rounding, and diffused low-opacity shadows. Plus Jakarta Sans
+			   headlines over DM Sans body with Fira Code for monospace. */
+			[data-theme="verdana"] {
+				--serif: "Plus Jakarta Sans", -apple-system, sans-serif;
+				--sans:  "DM Sans", -apple-system, sans-serif;
+				--mono:  "Fira Code", ui-monospace, monospace;
+
+				--bg:         #f8fafc;   /* slate-white page floor */
+				--bg-alt:     #ffffff;   /* card surfaces */
+				--bg-toolbar: #ffffff;
+				--bg-hover:   #f1f5f9;
+				--bg-select:  #f1f5f9;
+				--bg-active:  #e2e8f0;
+
+				--border:     #e2e8f0;   /* card outline */
+				--border-md:  #cbd5e1;
+				--border-hi:  #64748b;   /* secondary slate */
+
+				--text:       #0f172a;   /* primary navy */
+				--text-2:     #475569;
+				--text-3:     #64748b;
+				--text-4:     #94a3b8;
+
+				--accent:     #059669;   /* sage — CTAs, highlights, interactive */
+				--accent-dk:  #047857;   /* hover fill */
+				--accent-lt:  rgba(5, 150, 105, 0.1);  /* sage tint for positive states */
+				--accent-tx:  #059669;   /* sage links */
+
+				--danger:     #ef4444;
+				--danger-bg:  #fef2f2;
+				--danger-bd:  #fecaca;
+
+				--focus-ring: rgba(15, 23, 42, 0.09);  /* #0F172A18 ring */
+				/* Diffused md shadow — clinical yet approachable */
+				--shadow:     0 4px 16px rgba(15, 23, 42, 0.07);
+			}
+
+			/* Soft 8px rounding on every control conveys approachable calm */
+			[data-theme="verdana"] button {
+				border-radius: 8px;
+				font-weight: 500;
+			}
+			/* Tab buttons keep square edges so their active underline stays
+			   a clean bar rather than curving with the button radius */
+			[data-theme="verdana"] .pane-tab,
+			[data-theme="verdana"] .mob-tab {
+				border-radius: 0;
+			}
+			[data-theme="verdana"] input:not([type="checkbox"]):not([type="radio"]):not(.title-input),
+			[data-theme="verdana"] textarea,
+			[data-theme="verdana"] select {
+				border-radius: 8px;
+				background-color: #ffffff;
+			}
+
+			/* Sage is the interactive voice on bare links (styled anchors
+			   keep their component colours via higher-specificity rules) */
+			[data-theme="verdana"] a {
+				color: #059669;
+			}
+
+			/* Editor: Plus Jakarta Sans headings over DM Sans body */
+			[data-theme="verdana"] .ProseMirror {
+				font-family: "DM Sans", -apple-system, sans-serif;
+			}
+			[data-theme="verdana"] .ProseMirror h1,
+			[data-theme="verdana"] .ProseMirror h2,
+			[data-theme="verdana"] .ProseMirror h3 {
+				font-family: "Plus Jakarta Sans", -apple-system, sans-serif;
+				letter-spacing: -0.01em;
+			}
+
+			/* Tag surfaces show user-authored names — they are content, not
+			   chrome. Exempt them from the themes' uppercase CTA button
+			   voice (transform, tracking, and bolding) so tags read exactly
+			   as the user typed them. */
+			[data-theme="console-2001"] :is(.tag-panel-item, .note-tag-chip, .status-add-tag, .tag-chip-btn, .tag-popover button),
+			[data-theme="rosso"] :is(.tag-panel-item, .note-tag-chip, .status-add-tag, .tag-chip-btn, .tag-popover button),
+			[data-theme="bianco"] :is(.tag-panel-item, .note-tag-chip, .status-add-tag, .tag-chip-btn, .tag-popover button) {
+				text-transform: none;
+				letter-spacing: normal;
+				font-weight: 400;
+			}
+
+			/* Rawblock tags: no caps either, but they take the note-heading
+			   voice (Work Sans bold) instead of body weight, and the tag
+			   colour dots become square swatches with a black stroke. */
+			[data-theme="rawblock"] :is(.tag-panel-item, .note-tag-chip, .status-add-tag, .tag-chip-btn, .tag-popover button) {
+				text-transform: none;
+				letter-spacing: normal;
+				font-weight: 600;
+			}
+			html[data-theme="rawblock"] :is(.tag-dot, .status-tag-dot, .popover-tag-dot, .filter-capsule-dot) {
+				width: 12px;
+				height: 12px;
+				border-radius: 0;
+				border: 2px solid #000000;
+				box-sizing: border-box;
+			}
+
+			/* Mobile note-edit title: the 28px mobile size suits the compact
+			   Claude serif; the newer themes' wider faces truncate at that
+			   size, so step them down to fit comparable titles. */
+			@media (max-width: 640px) {
+				html[data-theme="rosso"] .title-input,
+				html[data-theme="bianco"] .title-input,
+				html[data-theme="verdana"] .title-input {
+					font-size: 22px;
+				}
+				html[data-theme="console-2001"] .title-input,
+				html[data-theme="rawblock"] .title-input {
+					font-size: 20px;
+				}
+			}
+
+			/* Sidebar note titles: the base 1.1rem is sized for the compact
+			   Claude serif; the newer themes' heading faces run wider, so
+			   titles that fit the pane in Claude overflow in them. Step the
+			   size down per face so the pane fits comparable text. */
+			html[data-theme="rosso"] .note-title,
+			html[data-theme="bianco"] .note-title,
+			html[data-theme="verdana"] .note-title {
+				font-size: 0.9375rem;
+			}
+			/* Arial Bold and Work Sans Bold are the widest — one step smaller */
+			html[data-theme="console-2001"] .note-title,
+			html[data-theme="rawblock"] .note-title {
+				font-size: 0.875rem;
+			}
+
+			/* Sub-screen typemark mask: on settings/archive/admin the wordmark
+			   is position:fixed while the body scrolls beneath it. A fixed
+			   strip in the page background colour sits between them
+			   (z-index 9, wordmark is 10) so scrolling content slides under a
+			   clean band instead of colliding with the typemark — works for
+			   every theme's typemark size. Desktop only: mobile hides the
+			   wordmark and uses its own top bar. */
+			@media (min-width: 641px) {
+				.settings-page::before,
+				.archive-page::before,
+				.admin-page::before {
+					content: "";
+					position: fixed;
+					top: 0;
+					left: 0;
+					right: 0;
+					height: 3.25rem;
+					background: var(--bg);
+					z-index: 9;
+					pointer-events: none;
+				}
+				/* Console 2001 carries its brushed-metal texture on the strip
+				   so the mask is seamless against the body */
+				[data-theme="console-2001"] .settings-page::before,
+				[data-theme="console-2001"] .archive-page::before,
+				[data-theme="console-2001"] .admin-page::before {
+					background-image: repeating-linear-gradient(
+						90deg,
+						rgba(255, 255, 255, 0.05) 0px, rgba(255, 255, 255, 0.05) 1px,
+						transparent 1px, transparent 3px
+					);
+				}
+			}
+
+			/* Base colours on the root so the background is always themed */
+			body {
+				background: var(--bg);
+				color: var(--text);
+				font-family: var(--sans);
+			}
+
+			/* Hide scrollbars on mobile — keep native-feel touch scrolling */
+			@media (max-width: 640px) {
+				* { scrollbar-width: none; -ms-overflow-style: none; }
+				*::-webkit-scrollbar { display: none !important; }
+
+				/* Admin + settings: flat card-row inputs (global so SW cache can't hide it) */
+				.fields-row input,
+				.fields-row .pw-wrap input {
+					border: none !important;
+					border-bottom: 1px solid var(--border) !important;
+					border-radius: 0 !important;
+					background: transparent !important;
+					-webkit-appearance: none !important;
+					appearance: none !important;
+					box-shadow: none !important;
+				}
+				.fields-row .pw-wrap {
+					border-bottom: 1px solid var(--border);
+					border-top: none;
+					border-left: none;
+					border-right: none;
+				}
+				.fields-row .pw-wrap input {
+					border-bottom: none !important;
+				}
+
+				/* Required-field validation: bold red bottom border + light red
+				   background tint on submit failure. Parent components add
+				   .field-invalid on plain inputs and .pw-wrap-invalid on the
+				   password wrapper; cleared on next input. On the settings page
+				   each PasswordInput sits in a .pw-field row whose own
+				   border-bottom is the visible separator, so colour that and
+				   tint the row when the wrapper inside is invalid. */
+				.fields-row .field-invalid,
+				.fields-row .pw-wrap-invalid,
+				.pw-field:has(.pw-wrap-invalid) {
+					border-bottom: 2px solid var(--danger) !important;
+					background: var(--danger-bg) !important;
+				}
+			}
+
+			/* Milkdown / ProseMirror editor ─ ensure it follows the theme */
+			.ProseMirror { color: var(--text) !important; caret-color: var(--text); font-family: var(--serif); font-size: 1.0625rem; line-height: 1.6; }
+			.ProseMirror h1 { font-family: var(--serif); font-weight: 700; font-size: 2rem; letter-spacing: -0.03em; line-height: 1.08; color: var(--text); }
+			.ProseMirror h2 { font-family: var(--serif); font-weight: 600; font-size: 1.35rem; letter-spacing: -0.01em; }
+			.ProseMirror h3 { font-family: var(--serif); font-weight: 600; font-size: 1.1rem; }
+			.ProseMirror code, .ProseMirror pre {
+				background: var(--bg-hover) !important;
+				color: var(--text-2) !important;
+				font-family: var(--mono) !important;
+			}
+			.ProseMirror blockquote {
+				border-left-color: var(--border-md) !important;
+				color: var(--text-3) !important;
+				font-style: italic;
+			}
+		</style>
+		%sveltekit.head%
+	</head>
+	<body data-sveltekit-preload-data="hover">
+		<div style="display: contents">%sveltekit.body%</div>
+	</body>
+</html>
