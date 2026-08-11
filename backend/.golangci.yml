@@ -1,0 +1,8 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - govet        # catches vet-level bugs (shadow, printf format, etc.)
+    - staticcheck  # broad static analysis: unused code, nil deref, unreachable, etc.
+    - ineffassign  # detects assignments whose value is never used
