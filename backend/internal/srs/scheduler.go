@@ -122,6 +122,11 @@ type Scheduler interface {
 	Retrievability(c CardState, now time.Time) float64
 }
 
+// weightCount is how many weights the algorithm expects. A stored blob with a
+// different count predates the current FSRS version and is discarded rather
+// than fed to the scheduler.
+var weightCount = len(DefaultParams().Weights)
+
 // Params are the tunable inputs to the algorithm, stored per user so a future
 // optimiser can replace them without a schema change.
 type Params struct {
@@ -160,7 +165,7 @@ func (p *Params) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	*p = Params(tmp)
-	if len(p.Weights) != len(fsrs.DefaultWeights()) {
+	if len(p.Weights) != weightCount {
 		p.Weights = DefaultParams().Weights
 	}
 	return nil
