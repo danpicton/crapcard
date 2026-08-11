@@ -282,3 +282,7 @@ func TestFieldMarkdownReachesTheClientUntouched(t *testing.T) {
 		t.Fatalf("markdown altered:\n got %q\nwant %q", q.Question, md)
 	}
 }
+
+// timeNow is a seam for the handler tests, which drive the service directly
+// to set a card up before exercising an endpoint.
+func timeNow() time.Time { return time.Now() }
