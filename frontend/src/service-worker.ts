@@ -15,6 +15,11 @@ import { build, files, version } from '$service-worker';
 
 const CACHE = `crapcard-${version}`;
 
+// Card images, cached as they are viewed so an offline session shows them.
+// Unversioned deliberately: an image's bytes never change under its id, so a
+// new app build has no reason to refetch them.
+const IMAGE_CACHE = 'crapcard-images';
+
 // Everything Vite emitted, everything in static/, and the SPA shell itself
 // (the fallback page the Go server hands out for every client-side route).
 const ASSETS = [...build, ...files, '/'];
@@ -32,7 +37,13 @@ sw.addEventListener('activate', (event) => {
 	event.waitUntil(
 		caches
 			.keys()
-			.then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key))))
+			.then((keys) =>
+				Promise.all(
+					keys
+						.filter((key) => key !== CACHE && key !== IMAGE_CACHE)
+						.map((key) => caches.delete(key)),
+				),
+			)
 			.then(() => sw.clients.claim()),
 	);
 });
@@ -43,7 +54,23 @@ sw.addEventListener('fetch', (event) => {
 
 	const url = new URL(request.url);
 	if (url.origin !== sw.location.origin) return;
-	// Data and images stay live; the app degrades deliberately when offline.
+
+	// Images are immutable under their id: cache-first, filled on first
+	// view, so a card studied offline still shows its pictures.
+	if (url.pathname.startsWith('/api/images/')) {
+		event.respondWith(
+			caches.open(IMAGE_CACHE).then(async (cache) => {
+				const cached = await cache.match(request);
+				if (cached) return cached;
+				const response = await fetch(request);
+				if (response.ok) void cache.put(request, response.clone());
+				return response;
+			}),
+		);
+		return;
+	}
+
+	// All other data stays live; the app degrades deliberately when offline.
 	if (url.pathname.startsWith('/api/') || url.pathname === '/healthz') return;
 
 	// Immutable build assets: cache-first, they never change under one name.

@@ -101,28 +101,35 @@
 	}
 </script>
 
-{#if session.counts && !session.finished}
+{#if !session.finished && (session.counts || session.remaining > 0)}
 	<div class="session-head">
-		{#if deckId === null && session.card}
+		{#if deckId === null && session.deckName !== null}
 			<p class="context muted small">
-				Studying <a href="/decks/{session.card.deck_id}">{session.card.deck_name}</a>
+				Studying <a href="/decks/{session.deckId}">{session.deckName}</a>
 			</p>
 		{/if}
 		<p class="counts">
-			<span class="pill new">{session.counts.new} new</span>
-			<span class="pill">{session.counts.learning} learning</span>
-			<span class="pill">{session.counts.due} due</span>
+			{#if sync.online && session.counts}
+				<span class="pill new">{session.counts.new} new</span>
+				<span class="pill">{session.counts.learning} learning</span>
+				<span class="pill">{session.counts.due} due</span>
+			{:else}
+				<!-- Server counts go stale offline; the local queue does not. -->
+				<span class="pill">{session.remaining} left</span>
+			{/if}
 			{#if session.reviewed > 0}
 				<span class="muted small">{session.reviewed} reviewed</span>
-				<button
-					type="button"
-					class="link undo"
-					disabled={session.submitting}
-					onclick={() => session.undo()}
-					title="Take back the last answer (U)"
-				>
-					Undo
-				</button>
+				{#if session.canUndo}
+					<button
+						type="button"
+						class="link undo"
+						disabled={session.submitting}
+						onclick={() => session.undo()}
+						title="Take back the last answer (U)"
+					>
+						Undo
+					</button>
+				{/if}
 			{/if}
 		</p>
 	</div>
@@ -135,14 +142,8 @@
 {#if session.stalled}
 	<div class="offline-note">
 		<p>
-			<strong>You're offline.</strong>
-			{#if sync.pendingAnswers > 0}
-				{sync.pendingAnswers}
-				{sync.pendingAnswers === 1 ? 'answer is' : 'answers are'} saved and will sync.
-			{:else}
-				Nothing is lost.
-			{/if}
-			The session continues as soon as the connection returns.
+			<strong>You're offline</strong> and no cards are cached for this session yet. Studying
+			resumes as soon as the connection returns.
 		</p>
 		<button type="button" class="secondary" onclick={() => session.resume()}> Try now </button>
 	</div>
@@ -160,6 +161,12 @@
 				{session.reviewed === 1 ? 'card' : 'cards'}.
 			{/if}
 		</p>
+		{#if sync.pendingAnswers > 0}
+			<p class="muted small">
+				{sync.pendingAnswers}
+				{sync.pendingAnswers === 1 ? 'answer' : 'answers'} will sync when the connection returns.
+			</p>
+		{/if}
 		<div class="done-actions">
 			<a class="primary button" href="/decks">Go to your decks</a>
 			{#if session.canUndo}
@@ -196,7 +203,9 @@
 				>
 					<span class="answer-label">{answer.label}</span>
 					<span class="answer-interval">
-						{session.card?.previews[answer.key]?.label ?? ''}
+						<!-- A regraded card's previews were computed from state it
+						     no longer has; better no label than a wrong one. -->
+						{session.card?.stale_previews ? '' : (session.card?.previews[answer.key]?.label ?? '')}
 					</span>
 				</button>
 			{/each}

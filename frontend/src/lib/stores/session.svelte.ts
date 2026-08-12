@@ -1,33 +1,79 @@
-import { api, ApiError, type StudyCard, type AnswerResult, type QueueCounts } from '$lib/api';
+import {
+	api,
+	ApiError,
+	RATING_KEYS,
+	type StudyCard,
+	type StudyQueue,
+	type AnswerResult,
+	type QueueCounts,
+} from '$lib/api';
 import { sync } from '$lib/stores/sync.svelte';
 
 /**
  * The study loop, kept out of the component so the state machine can be
  * tested on its own.
  *
- * The rules it enforces are the ones that would corrupt a schedule if the UI
- * got them wrong: an answer is only accepted once the card has been revealed,
- * and only one answer is in flight at a time.
+ * The whole due queue is fetched up front and studied locally, so grading
+ * continues with no network: an answer posts to the server when it can and
+ * parks in the outbox when it cannot, and either way the session moves to
+ * the next card. The queue is persisted, so a PWA opened offline resumes the
+ * cards it fetched last time.
+ *
+ * The rules enforced here are the ones that would corrupt a schedule if the
+ * UI got them wrong: an answer is only accepted once the card has been
+ * revealed, and only one answer is in flight at a time.
  */
 
+/** A card in the local queue, with client-side scheduling metadata. */
+export interface QueuedCard extends StudyCard {
+	/**
+	 * When a short-interval answer predicts this card comes back, in epoch
+	 * ms. Absent on cards straight from the server, which are due already.
+	 */
+	predicted_due_ms?: number;
+	/**
+	 * True once the card has been graded this sitting: its previews were
+	 * computed from the state it no longer has, so the labels are hidden.
+	 */
+	stale_previews?: boolean;
+}
+
+/** An answer given this sitting, kept so it can be taken back. */
+interface AnsweredCard {
+	card: QueuedCard;
+	rating: number;
+	/** The outbox entry when the answer never reached the server. */
+	outboxId: string | null;
+}
+
+/**
+ * Answers predicting a return within this window put the card back into the
+ * local queue — the learning loop ("Again" comes back in minutes) keeps
+ * working offline. Longer intervals belong to future sessions.
+ */
+const REQUEUE_HORIZON_S = 60 * 60;
+
 interface SessionDeps {
-	nextCard: (deckId: number | null) => Promise<StudyCard | null>;
+	fetchQueue: (deckId: number | null) => Promise<StudyQueue | null>;
 	answerCard: (cardId: number, rating: number) => Promise<AnswerResult>;
 	undoAnswer: () => Promise<StudyCard | null>;
-	/** Park an answer that could not reach the server. */
-	queueAnswer: (cardId: number, rating: number) => void;
-	/** Drain everything parked, in order, before asking for more cards. */
+	/** Park an answer that could not reach the server; returns its id. */
+	queueAnswer: (cardId: number, rating: number) => string;
+	/** Take a parked answer back; false if it already synced. */
+	removeQueuedAnswer: (id: string) => boolean;
+	/** Drain everything parked, in order. */
 	flushOutbox: () => Promise<void>;
 }
 
 const defaultDeps: SessionDeps = {
-	nextCard: (deckId) => (deckId === null ? api.nextCardAnywhere() : api.nextCard(deckId)),
+	fetchQueue: (deckId) => api.studyQueue(deckId),
 	answerCard: (cardId, rating) => api.answerCard(cardId, rating),
 	undoAnswer: () => api.undoAnswer(),
 	queueAnswer: (cardId, rating) => {
 		sync.markOffline();
-		sync.queueAnswer(cardId, rating);
+		return sync.queueAnswer(cardId, rating);
 	},
+	removeQueuedAnswer: (id) => sync.removeAnswer(id),
 	flushOutbox: () => sync.flush(),
 };
 
@@ -36,52 +82,125 @@ function isNetworkFailure(err: unknown): boolean {
 	return err instanceof ApiError && err.status === 0;
 }
 
+function ratingKey(rating: number): (typeof RATING_KEYS)[number] {
+	return RATING_KEYS[rating - 1] ?? 'good';
+}
+
+function storageKey(deckId: number | null): string {
+	return `crapcard-study-queue:${deckId ?? 'anywhere'}`;
+}
+
 /**
  * Creates a study session. Pass a deck id to study one deck, or null to
  * study whatever is due next anywhere — the landing screen's mode.
  */
 export function createSession(deckId: number | null, deps: SessionDeps = defaultDeps) {
-	let card = $state<StudyCard | null>(null);
+	let queue = $state<QueuedCard[]>([]);
+	let deckName = $state<string | null>(null);
+	let cardDeckId = $state<number | null>(deckId);
 	let revealed = $state(false);
-	let finished = $state(false);
+	let started = $state(false);
 	let loading = $state(false);
 	let submitting = $state(false);
 	let reviewed = $state(0);
 	let counts = $state<QueueCounts | null>(null);
 	let error = $state<string | null>(null);
-	// True when the network went away mid-session: the last answer is parked
-	// in the outbox and no further cards can be fetched until it returns.
+	// True when offline with nothing usable: no fetched queue, no leftovers.
 	let stalled = $state(false);
+	let history: AnsweredCard[] = [];
+
+	function persist() {
+		try {
+			localStorage.setItem(
+				storageKey(deckId),
+				JSON.stringify({ deck_id: cardDeckId, deck_name: deckName, counts, cards: queue }),
+			);
+		} catch {
+			// Storage full: offline resume degrades, the live session works.
+		}
+	}
+
+	function restore(): boolean {
+		try {
+			const raw = localStorage.getItem(storageKey(deckId));
+			if (!raw) return false;
+			const saved = JSON.parse(raw) as {
+				deck_id: number | null;
+				deck_name: string | null;
+				counts: QueueCounts | null;
+				cards: QueuedCard[];
+			};
+			if (!Array.isArray(saved.cards) || saved.cards.length === 0) return false;
+			queue = saved.cards;
+			deckName = saved.deck_name;
+			cardDeckId = saved.deck_id;
+			counts = saved.counts;
+			return true;
+		} catch {
+			return false;
+		}
+	}
+
+	/** Put a card graded moments ago back where its predicted due slots it:
+	 * after everything already due, in predicted order among its kind. */
+	function requeue(card: QueuedCard, predictedDueMs: number) {
+		const entry: QueuedCard = { ...card, predicted_due_ms: predictedDueMs, stale_previews: true };
+		let at = queue.length;
+		for (let i = 0; i < queue.length; i++) {
+			const other = queue[i].predicted_due_ms;
+			if (other !== undefined && other > predictedDueMs) {
+				at = i;
+				break;
+			}
+		}
+		queue = [...queue.slice(0, at), entry, ...queue.slice(at)];
+	}
 
 	async function load() {
 		loading = true;
 		try {
-			const next = await deps.nextCard(deckId);
-			card = next;
-			revealed = false;
-			finished = next === null;
+			const fetched = await deps.fetchQueue(deckId);
 			stalled = false;
-			if (next) counts = next.counts;
+			if (fetched === null) {
+				queue = [];
+			} else {
+				queue = fetched.cards;
+				deckName = fetched.deck_name;
+				cardDeckId = fetched.deck_id;
+				counts = fetched.counts;
+			}
+			persist();
 		} catch (err) {
 			if (isNetworkFailure(err)) {
-				stalled = true;
+				// Offline: yesterday's fetch is today's session.
+				if (!restore()) stalled = true;
 			} else {
-				error = err instanceof Error ? err.message : 'could not load the next card';
+				error = err instanceof Error ? err.message : 'could not load the study queue';
 			}
 		} finally {
+			started = true;
 			loading = false;
 		}
 	}
 
 	return {
-		get card() {
-			return card;
+		get card(): QueuedCard | null {
+			return queue[0] ?? null;
+		},
+		get deckName() {
+			return deckName;
+		},
+		get deckId() {
+			return cardDeckId;
+		},
+		get remaining() {
+			return queue.length;
 		},
 		get revealed() {
 			return revealed;
 		},
 		get finished() {
-			return finished;
+			return started && !stalled && queue.length === 0;
 		},
 		get loading() {
 			return loading;
@@ -103,15 +222,15 @@ export function createSession(deckId: number | null, deps: SessionDeps = default
 		},
 		/** True when there is an answer from this sitting to take back. */
 		get canUndo() {
-			return reviewed > 0 && !stalled;
+			return history.length > 0;
 		},
 
-		/** Load the first card. */
+		/** Fetch the queue (or restore the persisted one when offline). */
 		start: load,
 
 		/** Show the answer side. */
 		reveal() {
-			if (card) revealed = true;
+			if (queue.length > 0) revealed = true;
 		},
 
 		/**
@@ -121,30 +240,92 @@ export function createSession(deckId: number | null, deps: SessionDeps = default
 		 * something never recalled would feed the scheduler a meaningless
 		 * signal — and nothing while a previous answer is still in flight, so
 		 * a double tap cannot grade the same card twice.
+		 *
+		 * Offline the answer parks in the outbox and the session keeps going;
+		 * a short predicted interval (from the card's own FSRS previews) puts
+		 * the card back in the queue, so the learning loop works anywhere.
 		 */
 		async answer(rating: number) {
-			if (!card || !revealed || submitting || stalled) return;
+			const card = queue[0];
+			if (!card || !revealed || submitting) return;
 
 			submitting = true;
-			const answered = card;
 			try {
-				const result = await deps.answerCard(answered.card_id, rating);
-				counts = result.counts;
+				let intervalSeconds: number;
+				let outboxId: string | null = null;
+				try {
+					const result = await deps.answerCard(card.card_id, rating);
+					counts = result.counts;
+					intervalSeconds = result.interval_seconds;
+				} catch (err) {
+					if (!isNetworkFailure(err)) {
+						error = err instanceof Error ? err.message : 'could not save your answer';
+						return;
+					}
+					outboxId = deps.queueAnswer(card.card_id, rating);
+					intervalSeconds =
+						card.previews[ratingKey(rating)]?.interval_seconds ?? REQUEUE_HORIZON_S + 1;
+				}
+
+				history.push({ card, rating, outboxId });
 				reviewed += 1;
 				error = null;
-				await load();
+				queue = queue.slice(1);
+				if (intervalSeconds <= REQUEUE_HORIZON_S) {
+					requeue(card, Date.now() + intervalSeconds * 1000);
+				}
+				revealed = false;
+				persist();
+			} finally {
+				submitting = false;
+			}
+		},
+
+		/**
+		 * Take back the most recent answer: the card returns, already
+		 * revealed, so the right grade can be given instead. An answer still
+		 * parked in the outbox is simply withdrawn; one the server has seen
+		 * is reverted there.
+		 */
+		async undo() {
+			const last = history[history.length - 1];
+			if (!last || submitting) return;
+
+			submitting = true;
+			try {
+				let restored: QueuedCard | null = null;
+				if (last.outboxId !== null) {
+					if (deps.removeQueuedAnswer(last.outboxId)) {
+						restored = last.card;
+					} else {
+						// It synced while we hesitated; undo it server-side.
+						last.outboxId = null;
+					}
+				}
+				if (restored === null && last.outboxId === null) {
+					const fromServer = await deps.undoAnswer();
+					if (fromServer === null) {
+						history.pop();
+						return;
+					}
+					counts = fromServer.counts;
+					restored = fromServer;
+				}
+				if (restored === null) return;
+
+				history.pop();
+				// Drop any short-interval copy waiting further down the queue.
+				queue = [restored, ...queue.filter((c) => c.card_id !== restored.card_id)];
+				revealed = true;
+				stalled = false;
+				reviewed = Math.max(0, reviewed - 1);
+				error = null;
+				persist();
 			} catch (err) {
 				if (isNetworkFailure(err)) {
-					// The answer is not lost — it goes to the outbox and the
-					// session pauses until the network returns.
-					deps.queueAnswer(answered.card_id, rating);
-					reviewed += 1;
-					error = null;
-					stalled = true;
+					error = 'Cannot undo a synced answer while offline.';
 				} else {
-					// Keep the card and its revealed state so the answer can
-					// simply be given again.
-					error = err instanceof Error ? err.message : 'could not save your answer';
+					error = err instanceof Error ? err.message : 'could not undo the answer';
 				}
 			} finally {
 				submitting = false;
@@ -152,9 +333,9 @@ export function createSession(deckId: number | null, deps: SessionDeps = default
 		},
 
 		/**
-		 * Pick the session back up after a stall: replay the outbox first —
-		 * the server must apply the parked answers before choosing the next
-		 * card — then load whatever is due now.
+		 * Pick the session back up after an offline start with nothing
+		 * cached: replay the outbox first — the server must apply parked
+		 * answers before composing the queue — then fetch it.
 		 */
 		async resume() {
 			if (submitting) return;
@@ -165,34 +346,6 @@ export function createSession(deckId: number | null, deps: SessionDeps = default
 				submitting = false;
 			}
 			await load();
-		},
-
-		/**
-		 * Take back the most recent answer: the card returns, already
-		 * revealed, so the right grade can be given instead. Repeating it
-		 * steps further back through this sitting's answers.
-		 */
-		async undo() {
-			if (submitting || reviewed === 0 || stalled) return;
-
-			submitting = true;
-			try {
-				const restored = await deps.undoAnswer();
-				if (restored === null) {
-					reviewed = 0;
-					return;
-				}
-				card = restored;
-				counts = restored.counts;
-				revealed = true;
-				finished = false;
-				reviewed = Math.max(0, reviewed - 1);
-				error = null;
-			} catch (err) {
-				error = err instanceof Error ? err.message : 'could not undo the answer';
-			} finally {
-				submitting = false;
-			}
 		},
 	};
 }

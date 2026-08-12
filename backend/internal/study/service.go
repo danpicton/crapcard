@@ -107,8 +107,10 @@ func (s *Service) Next(ctx context.Context, userID, deckID int64, h cards.Horizo
 	return s.question(ctx, userID, due[0], h)
 }
 
-// question renders one card as a ready-to-show Question.
-func (s *Service) question(ctx context.Context, userID int64, card *cards.Card, h cards.Horizon) (*Question, error) {
+// render turns one card into a Question, with the deck name and counts
+// supplied by the caller — a queue fetch renders hundreds of cards against
+// one counts query, not one each.
+func (s *Service) render(ctx context.Context, userID int64, card *cards.Card, deckName string, counts cards.Counts, h cards.Horizon) (*Question, error) {
 	note, err := s.notes.Get(ctx, userID, card.NoteID)
 	if err != nil {
 		return nil, fmt.Errorf("load note for card %d: %w", card.ID, err)
@@ -122,21 +124,11 @@ func (s *Service) question(ctx context.Context, userID int64, card *cards.Card, 
 		return nil, fmt.Errorf("render card %d: %w", card.ID, err)
 	}
 
-	counts, err := s.cards.Counts(ctx, userID, card.DeckID, h)
-	if err != nil {
-		return nil, err
-	}
-
-	deck, err := s.decks.Get(ctx, userID, card.DeckID)
-	if err != nil {
-		return nil, fmt.Errorf("load deck for card %d: %w", card.ID, err)
-	}
-
 	return &Question{
 		CardID:   card.ID,
 		NoteID:   note.ID,
 		DeckID:   card.DeckID,
-		DeckName: deck.Name,
+		DeckName: deckName,
 		Template: card.Template,
 		Question: rendered.Question,
 		Answer:   rendered.Answer,
@@ -144,6 +136,78 @@ func (s *Service) question(ctx context.Context, userID int64, card *cards.Card, 
 		Counts:   counts,
 		Previews: s.previews(card.State, h.Now),
 	}, nil
+}
+
+// question renders one card as a ready-to-show Question, loading the deck
+// and counts itself.
+func (s *Service) question(ctx context.Context, userID int64, card *cards.Card, h cards.Horizon) (*Question, error) {
+	counts, err := s.cards.Counts(ctx, userID, card.DeckID, h)
+	if err != nil {
+		return nil, err
+	}
+	deck, err := s.decks.Get(ctx, userID, card.DeckID)
+	if err != nil {
+		return nil, fmt.Errorf("load deck for card %d: %w", card.ID, err)
+	}
+	return s.render(ctx, userID, card, deck.Name, counts, h)
+}
+
+// MaxQueueSize bounds how many cards a queue fetch materialises. Far above
+// any sane single sitting; it exists so a pathological deck cannot make the
+// server render without limit.
+const MaxQueueSize = 1000
+
+// Queue is a whole study session's worth of cards, fetched in one go so the
+// client can keep studying with no network.
+type Queue struct {
+	DeckID   int64
+	DeckName string
+	Counts   cards.Counts
+	Cards    []*Question
+}
+
+// DeckQueue returns every card currently due in the deck, rendered and ready
+// — the offline client's study session. An empty deck is an empty list, not
+// an error.
+func (s *Service) DeckQueue(ctx context.Context, userID, deckID int64, h cards.Horizon) (*Queue, error) {
+	deck, err := s.decks.Get(ctx, userID, deckID)
+	if err != nil {
+		return nil, err
+	}
+
+	due, err := s.cards.Due(ctx, userID, deckID, h, MaxQueueSize)
+	if err != nil {
+		return nil, err
+	}
+
+	counts, err := s.cards.Counts(ctx, userID, deckID, h)
+	if err != nil {
+		return nil, err
+	}
+
+	q := &Queue{DeckID: deckID, DeckName: deck.Name, Counts: counts, Cards: make([]*Question, 0, len(due))}
+	for _, card := range due {
+		question, err := s.render(ctx, userID, card, deck.Name, counts, h)
+		if err != nil {
+			return nil, err
+		}
+		q.Cards = append(q.Cards, question)
+	}
+	return q, nil
+}
+
+// QueueAnywhere is DeckQueue for the deck the user would land on: the most
+// recently studied deck with something due. ErrQueueEmpty when no deck has
+// anything waiting.
+func (s *Service) QueueAnywhere(ctx context.Context, userID int64, h cards.Horizon) (*Queue, error) {
+	deckID, err := s.cards.NextDeckToStudy(ctx, userID, h)
+	if errors.Is(err, cards.ErrNotFound) {
+		return nil, ErrQueueEmpty
+	}
+	if err != nil {
+		return nil, err
+	}
+	return s.DeckQueue(ctx, userID, deckID, h)
 }
 
 // Undo reverts the user's most recent answer and hands the card back,

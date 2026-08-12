@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createSession } from './session.svelte';
-import { ApiError, type StudyCard, type AnswerResult } from '$lib/api';
+import { ApiError, type StudyCard, type StudyQueue, type AnswerResult } from '$lib/api';
 
 function card(overrides: Partial<StudyCard> = {}): StudyCard {
 	return {
@@ -23,48 +23,61 @@ function card(overrides: Partial<StudyCard> = {}): StudyCard {
 	};
 }
 
+function studyQueue(cards: StudyCard[], overrides: Partial<StudyQueue> = {}): StudyQueue {
+	return {
+		deck_id: 1,
+		deck_name: 'Italian',
+		counts: { new: cards.length, learning: 0, due: 0, total: cards.length },
+		cards,
+		...overrides,
+	};
+}
+
 function answerResult(overrides: Partial<AnswerResult> = {}): AnswerResult {
 	return {
 		card_id: 1,
 		interval_seconds: 86400,
 		interval_label: '1d',
 		due: '',
-		state: 'learning',
+		state: 'review',
 		counts: { new: 1, learning: 0, due: 0, total: 1 },
 		...overrides,
 	};
 }
 
-describe('study session', () => {
-	let deps: {
-		nextCard: ReturnType<typeof vi.fn>;
-		answerCard: ReturnType<typeof vi.fn>;
-		undoAnswer: ReturnType<typeof vi.fn>;
-		queueAnswer: ReturnType<typeof vi.fn>;
-		flushOutbox: ReturnType<typeof vi.fn>;
+function testDeps() {
+	return {
+		fetchQueue: vi.fn().mockResolvedValue(studyQueue([card()])),
+		answerCard: vi.fn().mockResolvedValue(answerResult()),
+		undoAnswer: vi.fn().mockResolvedValue(card()),
+		queueAnswer: vi.fn().mockReturnValue('outbox-1'),
+		removeQueuedAnswer: vi.fn().mockReturnValue(true),
+		flushOutbox: vi.fn().mockResolvedValue(undefined),
 	};
+}
+
+const networkDown = new ApiError(0, 'network error');
+
+describe('study session', () => {
+	let deps: ReturnType<typeof testDeps>;
 
 	beforeEach(() => {
-		deps = {
-			nextCard: vi.fn().mockResolvedValue(card()),
-			answerCard: vi.fn().mockResolvedValue(answerResult()),
-			undoAnswer: vi.fn().mockResolvedValue(card()),
-			queueAnswer: vi.fn(),
-			flushOutbox: vi.fn().mockResolvedValue(undefined),
-		};
+		localStorage.clear();
+		deps = testDeps();
 	});
 
-	it('loads the first card with its answer hidden', async () => {
+	it('fetches the whole queue and serves the first card, hidden', async () => {
+		deps.fetchQueue.mockResolvedValue(studyQueue([card(), card({ card_id: 2 })]));
 		const s = createSession(1, deps);
 		await s.start();
 
-		expect(s.card?.question).toBe('ciao');
+		expect(s.card?.card_id).toBe(1);
+		expect(s.remaining).toBe(2);
 		expect(s.revealed).toBe(false);
 		expect(s.finished).toBe(false);
 	});
 
 	it('hides the answer until it is asked for', async () => {
-		// Showing the answer with the question would defeat the exercise.
 		const s = createSession(1, deps);
 		await s.start();
 
@@ -74,8 +87,8 @@ describe('study session', () => {
 	});
 
 	it('refuses to answer before the card has been revealed', async () => {
-		// Grading how well you recalled something you never tried to recall is
-		// meaningless, and would corrupt the schedule.
+		// Grading how well you recalled something you never tried to recall
+		// is meaningless, and would corrupt the schedule.
 		const s = createSession(1, deps);
 		await s.start();
 
@@ -85,17 +98,21 @@ describe('study session', () => {
 		expect(s.card?.card_id).toBe(1);
 	});
 
-	it('submits the rating and loads the next card, hidden again', async () => {
+	it('submits the rating and advances to the next card, hidden again', async () => {
+		deps.fetchQueue.mockResolvedValue(
+			studyQueue([card(), card({ card_id: 2, question: 'grazie' })]),
+		);
 		const s = createSession(1, deps);
 		await s.start();
 		s.reveal();
 
-		deps.nextCard.mockResolvedValue(card({ card_id: 2, question: 'grazie', answer: 'thanks' }));
 		await s.answer(3);
 
 		expect(deps.answerCard).toHaveBeenCalledWith(1, 3);
 		expect(s.card?.question).toBe('grazie');
 		expect(s.revealed).toBe(false);
+		// The queue was fetched once; advancing needs no network.
+		expect(deps.fetchQueue).toHaveBeenCalledTimes(1);
 	});
 
 	it('finishes when the queue runs out', async () => {
@@ -103,7 +120,6 @@ describe('study session', () => {
 		await s.start();
 		s.reveal();
 
-		deps.nextCard.mockResolvedValue(null);
 		await s.answer(4);
 
 		expect(s.finished).toBe(true);
@@ -111,53 +127,57 @@ describe('study session', () => {
 	});
 
 	it('starts finished when the deck has nothing due', async () => {
-		deps.nextCard.mockResolvedValue(null);
+		deps.fetchQueue.mockResolvedValue(studyQueue([]));
 		const s = createSession(1, deps);
 		await s.start();
 
 		expect(s.finished).toBe(true);
 	});
 
-	it('tracks how many cards have been answered this sitting', async () => {
+	it('puts a short-interval answer back into the queue', async () => {
+		// "Again" comes back in a minute; the learning loop must survive the
+		// move to a locally-held queue.
+		deps.fetchQueue.mockResolvedValue(studyQueue([card(), card({ card_id: 2 })]));
+		deps.answerCard.mockResolvedValue(answerResult({ interval_seconds: 60 }));
 		const s = createSession(1, deps);
 		await s.start();
-
 		s.reveal();
-		await s.answer(3);
-		s.reveal();
-		await s.answer(3);
 
-		expect(s.reviewed).toBe(2);
+		await s.answer(1);
+
+		expect(s.remaining).toBe(2);
+		expect(s.card?.card_id).toBe(2); // the due card first
+		s.reveal();
+		deps.answerCard.mockResolvedValue(answerResult({ interval_seconds: 999999 }));
+		await s.answer(4);
+
+		// The relearning copy is served, marked so its stale labels hide.
+		expect(s.card?.card_id).toBe(1);
+		expect(s.card?.stale_previews).toBe(true);
 	});
 
-	it('takes the counts from the next card, which the server computed after the answer', async () => {
-		const s = createSession(1, deps);
-		await s.start();
-		expect(s.counts?.total).toBe(2);
-
-		s.reveal();
-		deps.nextCard.mockResolvedValue(
-			card({ card_id: 2, counts: { new: 1, learning: 0, due: 0, total: 1 } }),
-		);
-		await s.answer(3);
-
-		expect(s.counts?.total).toBe(1);
-	});
-
-	it('falls back to the answer response counts when that answer emptied the queue', async () => {
-		// There is no next card to read fresher counts from, so the answer's
-		// own counts are all there is.
+	it('does not requeue a long-interval answer', async () => {
+		deps.answerCard.mockResolvedValue(answerResult({ interval_seconds: 4 * 86400 }));
 		const s = createSession(1, deps);
 		await s.start();
 		s.reveal();
 
-		deps.nextCard.mockResolvedValue(null);
-		deps.answerCard.mockResolvedValue(
-			answerResult({ counts: { new: 0, learning: 0, due: 0, total: 0 } }),
-		);
 		await s.answer(4);
 
 		expect(s.finished).toBe(true);
+	});
+
+	it('takes the counts from each answer, which the server computed after it', async () => {
+		const s = createSession(1, deps);
+		await s.start();
+		expect(s.counts?.total).toBe(1);
+
+		s.reveal();
+		deps.answerCard.mockResolvedValue(
+			answerResult({ counts: { new: 0, learning: 0, due: 0, total: 0 } }),
+		);
+		await s.answer(3);
+
 		expect(s.counts?.total).toBe(0);
 	});
 
@@ -182,37 +202,34 @@ describe('study session', () => {
 		expect(deps.answerCard).toHaveBeenCalledTimes(1);
 	});
 
-	it('surfaces a failure and keeps the card so the answer can be retried', async () => {
+	it('surfaces a server rejection and keeps the card for a retry', async () => {
 		const s = createSession(1, deps);
 		await s.start();
 		s.reveal();
 
-		deps.answerCard.mockRejectedValue(new Error('network error'));
+		deps.answerCard.mockRejectedValue(new ApiError(409, 'already answered'));
 		await s.answer(3);
 
-		expect(s.error).toContain('network error');
+		expect(s.error).toContain('already answered');
 		expect(s.card?.card_id).toBe(1);
 		expect(s.revealed).toBe(true);
-	});
-
-	it('clears a previous error on the next successful answer', async () => {
-		const s = createSession(1, deps);
-		await s.start();
-		s.reveal();
-		deps.answerCard.mockRejectedValueOnce(new Error('network error'));
-		await s.answer(3);
-		expect(s.error).toBeTruthy();
-
-		await s.answer(3);
-		expect(s.error).toBeNull();
+		expect(deps.queueAnswer).not.toHaveBeenCalled();
 	});
 
 	it('studies from anywhere when no deck is named', async () => {
 		const s = createSession(null, deps);
 		await s.start();
 
-		expect(deps.nextCard).toHaveBeenCalledWith(null);
-		expect(s.card?.question).toBe('ciao');
+		expect(deps.fetchQueue).toHaveBeenCalledWith(null);
+		expect(s.deckName).toBe('Italian');
+	});
+
+	it('finishes cleanly when nothing is due anywhere', async () => {
+		deps.fetchQueue.mockResolvedValue(null);
+		const s = createSession(null, deps);
+		await s.start();
+
+		expect(s.finished).toBe(true);
 	});
 
 	it('refuses to undo before anything has been answered', async () => {
@@ -224,23 +241,22 @@ describe('study session', () => {
 		expect(deps.undoAnswer).not.toHaveBeenCalled();
 	});
 
-	it('brings the answered card back, revealed, when undone', async () => {
+	it('brings a synced answer back through the server, revealed', async () => {
+		deps.fetchQueue.mockResolvedValue(studyQueue([card(), card({ card_id: 2 })]));
 		const s = createSession(1, deps);
 		await s.start();
 		s.reveal();
-
-		deps.nextCard.mockResolvedValue(card({ card_id: 2, question: 'grazie' }));
-		await s.answer(3);
+		await s.answer(4);
 		expect(s.card?.card_id).toBe(2);
-		expect(s.canUndo).toBe(true);
 
 		deps.undoAnswer.mockResolvedValue(card({ card_id: 1 }));
 		await s.undo();
 
+		expect(deps.undoAnswer).toHaveBeenCalled();
 		expect(s.card?.card_id).toBe(1);
 		expect(s.revealed).toBe(true);
 		expect(s.reviewed).toBe(0);
-		expect(s.canUndo).toBe(false);
+		expect(s.remaining).toBe(2);
 	});
 
 	it('undoes its way back out of a finished session', async () => {
@@ -249,8 +265,6 @@ describe('study session', () => {
 		const s = createSession(1, deps);
 		await s.start();
 		s.reveal();
-
-		deps.nextCard.mockResolvedValue(null);
 		await s.answer(4);
 		expect(s.finished).toBe(true);
 
@@ -262,111 +276,132 @@ describe('study session', () => {
 		expect(s.revealed).toBe(true);
 	});
 
-	it('handles the server having nothing to undo', async () => {
+	it('removes the requeued copy when a short-interval answer is undone', async () => {
+		deps.answerCard.mockResolvedValue(answerResult({ interval_seconds: 60 }));
 		const s = createSession(1, deps);
 		await s.start();
 		s.reveal();
-		await s.answer(3);
+		await s.answer(1);
+		expect(s.remaining).toBe(1); // the relearning copy
 
-		deps.undoAnswer.mockResolvedValue(null);
+		deps.undoAnswer.mockResolvedValue(card({ card_id: 1 }));
 		await s.undo();
 
-		expect(s.canUndo).toBe(false);
-		expect(s.error).toBeNull();
+		expect(s.remaining).toBe(1); // the restored card, not two copies
+		expect(s.card?.card_id).toBe(1);
 	});
 });
 
 describe('study session while offline', () => {
-	let deps: {
-		nextCard: ReturnType<typeof vi.fn>;
-		answerCard: ReturnType<typeof vi.fn>;
-		undoAnswer: ReturnType<typeof vi.fn>;
-		queueAnswer: ReturnType<typeof vi.fn>;
-		flushOutbox: ReturnType<typeof vi.fn>;
-	};
-	const networkDown = new ApiError(0, 'network error');
+	let deps: ReturnType<typeof testDeps>;
 
 	beforeEach(() => {
-		deps = {
-			nextCard: vi.fn().mockResolvedValue(card()),
-			answerCard: vi.fn().mockResolvedValue(answerResult()),
-			undoAnswer: vi.fn().mockResolvedValue(card()),
-			queueAnswer: vi.fn(),
-			flushOutbox: vi.fn().mockResolvedValue(undefined),
-		};
+		localStorage.clear();
+		deps = testDeps();
 	});
 
-	it('parks an answer the network refused and stalls instead of erroring', async () => {
+	it('keeps studying: a refused answer parks in the outbox and the next card comes up', async () => {
+		deps.fetchQueue.mockResolvedValue(
+			studyQueue([card(), card({ card_id: 2, question: 'grazie' })]),
+		);
 		const s = createSession(1, deps);
 		await s.start();
 		s.reveal();
 
 		deps.answerCard.mockRejectedValue(networkDown);
-		await s.answer(3);
+		await s.answer(4);
 
-		expect(deps.queueAnswer).toHaveBeenCalledWith(1, 3);
-		expect(s.stalled).toBe(true);
+		expect(deps.queueAnswer).toHaveBeenCalledWith(1, 4);
 		expect(s.error).toBeNull();
+		expect(s.card?.card_id).toBe(2);
 		expect(s.reviewed).toBe(1);
 	});
 
-	it('refuses further grading and undo while stalled', async () => {
+	it('uses the card previews to requeue a short offline answer', async () => {
+		// No server verdict offline — the FSRS previews fetched with the card
+		// are the best available prediction.
+		const s = createSession(1, deps);
+		await s.start();
+		s.reveal();
+
+		deps.answerCard.mockRejectedValue(networkDown);
+		await s.answer(1); // "again" previews at 60s
+
+		expect(s.remaining).toBe(1);
+		expect(s.card?.card_id).toBe(1);
+		expect(s.card?.stale_previews).toBe(true);
+	});
+
+	it('withdraws an unsynced answer from the outbox on undo, no server needed', async () => {
+		deps.fetchQueue.mockResolvedValue(studyQueue([card(), card({ card_id: 2 })]));
 		const s = createSession(1, deps);
 		await s.start();
 		s.reveal();
 		deps.answerCard.mockRejectedValue(networkDown);
-		await s.answer(3);
-
-		deps.answerCard.mockResolvedValue(answerResult());
 		await s.answer(4);
+
 		await s.undo();
 
-		expect(deps.answerCard).toHaveBeenCalledTimes(1);
+		expect(deps.removeQueuedAnswer).toHaveBeenCalledWith('outbox-1');
 		expect(deps.undoAnswer).not.toHaveBeenCalled();
+		expect(s.card?.card_id).toBe(1);
+		expect(s.revealed).toBe(true);
+		expect(s.reviewed).toBe(0);
 	});
 
-	it('resume flushes the outbox before asking for the next card', async () => {
+	it('falls back to a server undo when the parked answer already synced', async () => {
+		const s = createSession(1, deps);
+		await s.start();
+		s.reveal();
+		deps.answerCard.mockRejectedValue(networkDown);
+		await s.answer(4);
+
+		deps.removeQueuedAnswer.mockReturnValue(false);
+		deps.undoAnswer.mockResolvedValue(card({ card_id: 1 }));
+		await s.undo();
+
+		expect(deps.undoAnswer).toHaveBeenCalled();
+		expect(s.card?.card_id).toBe(1);
+	});
+
+	it('resumes from the persisted queue when the fetch fails', async () => {
+		// The PWA opened with no network: yesterday's fetch is the session.
+		const first = createSession(1, deps);
+		await first.start(); // persists the queue
+
+		const offlineDeps = testDeps();
+		offlineDeps.fetchQueue.mockRejectedValue(networkDown);
+		const second = createSession(1, offlineDeps);
+		await second.start();
+
+		expect(second.card?.card_id).toBe(1);
+		expect(second.stalled).toBe(false);
+	});
+
+	it('stalls only when offline with nothing cached', async () => {
+		deps.fetchQueue.mockRejectedValue(networkDown);
+		const s = createSession(1, deps);
+		await s.start();
+
+		expect(s.stalled).toBe(true);
+		expect(s.finished).toBe(false);
+		expect(s.error).toBeNull();
+	});
+
+	it('resume flushes the outbox before refetching the queue', async () => {
 		const order: string[] = [];
 		deps.flushOutbox.mockImplementation(async () => {
 			order.push('flush');
 		});
+		deps.fetchQueue.mockImplementation(async () => {
+			order.push('fetch');
+			return studyQueue([card({ card_id: 2 })]);
+		});
 
 		const s = createSession(1, deps);
-		await s.start();
-		s.reveal();
-		deps.answerCard.mockRejectedValue(networkDown);
-		await s.answer(3);
-
-		deps.nextCard.mockImplementation(async () => {
-			order.push('next');
-			return card({ card_id: 2 });
-		});
 		await s.resume();
 
-		expect(order).toEqual(['flush', 'next']);
-		expect(s.stalled).toBe(false);
+		expect(order).toEqual(['flush', 'fetch']);
 		expect(s.card?.card_id).toBe(2);
-	});
-
-	it('stalls quietly when even the first card cannot be fetched', async () => {
-		deps.nextCard.mockRejectedValue(networkDown);
-		const s = createSession(1, deps);
-		await s.start();
-
-		expect(s.stalled).toBe(true);
-		expect(s.error).toBeNull();
-	});
-
-	it('a server rejection is still an error, not a stall', async () => {
-		const s = createSession(1, deps);
-		await s.start();
-		s.reveal();
-
-		deps.answerCard.mockRejectedValue(new ApiError(409, 'already answered'));
-		await s.answer(3);
-
-		expect(s.stalled).toBe(false);
-		expect(deps.queueAnswer).not.toHaveBeenCalled();
-		expect(s.error).toContain('already answered');
 	});
 });

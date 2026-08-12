@@ -196,9 +196,23 @@ export function createSyncStore(deps: SyncDeps = defaultDeps) {
 		markOnline,
 		flush,
 
-		queueAnswer(cardId: number, rating: number) {
-			outbox = [...outbox, { id: newId(), kind: 'answer', cardId, rating }];
+		/** Returns the entry's id so the caller can take the answer back
+		 * before it ever reaches the server. */
+		queueAnswer(cardId: number, rating: number): string {
+			const id = newId();
+			outbox = [...outbox, { id, kind: 'answer', cardId, rating }];
 			persist();
+			return id;
+		},
+
+		/** Remove a queued answer that was undone before syncing. False when
+		 * it already left the queue (a flush got there first). */
+		removeAnswer(id: string): boolean {
+			const before = outbox.length;
+			outbox = outbox.filter((e) => !(e.kind === 'answer' && e.id === id));
+			if (outbox.length === before) return false;
+			persist();
+			return true;
 		},
 
 		/** Queue a note save, replacing any earlier queued save of the same

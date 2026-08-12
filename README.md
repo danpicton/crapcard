@@ -35,12 +35,15 @@ the two apps look and feel like siblings.
   latest wording. The only buttons left are Done and Preview.
 - **Decks.** A note belongs to one deck; study sessions are per-deck, with a
   paginated card list.
-- **Offline, without losing anything.** A service worker keeps the app shell
-  openable with no network, and everything that must reach the server —
-  answers, autosaved edits, new cards — goes into a persistent outbox when
-  offline, replayed in order on reconnect. The top bar shows offline/syncing
-  state, and a study session pauses mid-card and resumes by itself when the
-  connection returns.
+- **Offline studying, without losing anything.** A study session fetches its
+  whole due queue in one go and grades from a local copy, persisted across
+  restarts — so reviewing keeps working with no network, including the
+  learning loop ("Again" brings the card back minutes later, placed by its
+  own FSRS preview) and undo. A service worker keeps the app shell openable
+  offline and caches card images as they are seen. Everything that must
+  reach the server — answers, autosaved edits, new cards — goes into a
+  persistent outbox, replayed in order on reconnect; the top bar shows
+  offline/syncing state.
 - **FSRS scheduling.** Each answer feeds the algorithm; the four answer buttons
   are labelled with the interval each would produce. Review cards are due at
   day granularity in *your* timezone — a card due at 14:00 shows up in the
@@ -216,7 +219,9 @@ All routes need a session cookie except `/healthz` and the setup/login handshake
 | `GET` | `/api/config` | Deployment settings the client needs (page size) |
 | `GET` | `/api/notes/{id}/preview` | Every card the note produces, rendered |
 | `GET` | `/api/study/next` | Next due card from any deck, or `204` if none |
+| `GET` | `/api/study/queue` | Every due card in the deck you'd land on, rendered, or `204` |
 | `GET` | `/api/decks/{id}/study/next` | Next due card in one deck, or `204` |
+| `GET` | `/api/decks/{id}/study/queue` | Every due card in one deck, rendered (empty list when none) |
 | `GET` | `/api/decks/{id}/study/counts` | Queue counts |
 | `POST` | `/api/cards/{id}/answer` | `{"rating": 1..4}` |
 | `POST` | `/api/study/undo` | Revert the latest answer; returns the card, or `204` if nothing to undo |

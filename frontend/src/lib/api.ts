@@ -86,6 +86,14 @@ export interface StudyCard {
 	previews: Record<string, AnswerPreview>;
 }
 
+/** A whole study session's worth of cards, fetched in one go. */
+export interface StudyQueue {
+	deck_id: number;
+	deck_name: string;
+	counts: QueueCounts;
+	cards: StudyCard[];
+}
+
 export interface AnswerResult {
 	card_id: number;
 	interval_seconds: number;
@@ -268,6 +276,15 @@ export const api = {
 	nextCardAnywhere: () => request<StudyCard | null>(`/api/study/next?${tzQuery()}`),
 	deckCounts: (deckId: number) =>
 		request<QueueCounts>(`/api/decks/${deckId}/study/counts?${tzQuery()}`),
+	/**
+	 * Every card currently due, rendered — one fetch and the whole session
+	 * can run without the network. Pass null for the deck the user would
+	 * land on (null result when nothing is due anywhere).
+	 */
+	studyQueue: (deckId: number | null) =>
+		deckId === null
+			? request<StudyQueue | null>(`/api/study/queue?${tzQuery()}`)
+			: request<StudyQueue | null>(`/api/decks/${deckId}/study/queue?${tzQuery()}`),
 	answerCard: (cardId: number, rating: RatingValue | number) =>
 		postJSON<AnswerResult>(`/api/cards/${cardId}/answer?${tzQuery()}`, { rating }),
 	/**

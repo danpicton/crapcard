@@ -50,6 +50,10 @@ api -X POST "${BASE}/api/notes" -H 'Content-Type: application/json' \
 TOTAL=$(api "${BASE}/api/decks/${DECK}/study/counts" | json '["total"]')
 [[ "$TOTAL" == "2" ]] || { echo "expected 2 due cards, got ${TOTAL}"; exit 1; }
 
+echo "→ the whole queue arrives in one fetch"
+QLEN=$(api "${BASE}/api/decks/${DECK}/study/queue" | json '["cards"].__len__()')
+[[ "$QLEN" == "2" ]] || { echo "expected a queue of 2, got ${QLEN}"; exit 1; }
+
 echo "→ study both directions"
 for _ in 1 2; do
 	CARD=$(api "${BASE}/api/decks/${DECK}/study/next" | json '["card_id"]')

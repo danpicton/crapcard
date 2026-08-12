@@ -12,6 +12,7 @@ import (
 
 	"github.com/danpicton/crapcard/internal/auth"
 	"github.com/danpicton/crapcard/internal/cards"
+	"github.com/danpicton/crapcard/internal/decks"
 	"github.com/danpicton/crapcard/internal/httpx"
 	"github.com/danpicton/crapcard/internal/notes"
 	"github.com/danpicton/crapcard/internal/srs"
@@ -39,6 +40,58 @@ func (h *Handler) Register(mux *http.ServeMux, requireAuth Middleware) {
 	mux.Handle("GET /api/decks/{id}/study/counts", requireAuth(http.HandlerFunc(h.Counts)))
 	mux.Handle("POST /api/cards/{id}/answer", requireAuth(http.HandlerFunc(h.Answer)))
 	mux.Handle("POST /api/study/undo", requireAuth(http.HandlerFunc(h.Undo)))
+	mux.Handle("GET /api/decks/{id}/study/queue", requireAuth(http.HandlerFunc(h.Queue)))
+	mux.Handle("GET /api/study/queue", requireAuth(http.HandlerFunc(h.QueueAnywhere)))
+}
+
+// Queue handles GET /api/decks/{id}/study/queue: every due card in the deck,
+// rendered, so the client can study through them without coming back — the
+// offline session's fetch. An empty queue is an empty list, not a 204: the
+// counts still matter.
+func (h *Handler) Queue(w http.ResponseWriter, r *http.Request) {
+	u := auth.UserFromContext(r.Context())
+	deckID, ok := httpx.PathID(r, "id")
+	if !ok {
+		httpx.WriteError(w, http.StatusNotFound, "deck not found")
+		return
+	}
+
+	q, err := h.svc.DeckQueue(r.Context(), u.ID, deckID, h.horizon(r))
+	if err != nil {
+		writeStudyError(w, err)
+		return
+	}
+	writeQueue(w, q)
+}
+
+// QueueAnywhere handles GET /api/study/queue: the queue of whichever deck
+// the user would land on. 204 when nothing is due in any deck.
+func (h *Handler) QueueAnywhere(w http.ResponseWriter, r *http.Request) {
+	u := auth.UserFromContext(r.Context())
+
+	q, err := h.svc.QueueAnywhere(r.Context(), u.ID, h.horizon(r))
+	if errors.Is(err, ErrQueueEmpty) {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if err != nil {
+		writeStudyError(w, err)
+		return
+	}
+	writeQueue(w, q)
+}
+
+func writeQueue(w http.ResponseWriter, q *Queue) {
+	cardsOut := make([]map[string]any, 0, len(q.Cards))
+	for _, question := range q.Cards {
+		cardsOut = append(cardsOut, questionJSON(question))
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"deck_id":   q.DeckID,
+		"deck_name": q.DeckName,
+		"counts":    countsJSON(q.Counts),
+		"cards":     cardsOut,
+	})
 }
 
 // Undo handles POST /api/study/undo: revert the most recent answer and hand
@@ -115,8 +168,8 @@ func (h *Handler) NextAnywhere(w http.ResponseWriter, r *http.Request) {
 	writeQuestion(w, q)
 }
 
-// writeQuestion renders a Question as the study API's card shape.
-func writeQuestion(w http.ResponseWriter, q *Question) {
+// questionJSON is a Question in the study API's card shape.
+func questionJSON(q *Question) map[string]any {
 	previews := make(map[string]any, len(q.Previews))
 	for rating, p := range q.Previews {
 		previews[rating.String()] = map[string]any{
@@ -126,18 +179,22 @@ func writeQuestion(w http.ResponseWriter, q *Question) {
 		}
 	}
 
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+	return map[string]any{
 		"card_id":   q.CardID,
 		"note_id":   q.NoteID,
 		"deck_id":   q.DeckID,
 		"deck_name": q.DeckName,
 		"template":  q.Template,
-		"question": q.Question,
-		"answer":   q.Answer,
-		"state":    q.State.String(),
-		"counts":   countsJSON(q.Counts),
-		"previews": previews,
-	})
+		"question":  q.Question,
+		"answer":    q.Answer,
+		"state":     q.State.String(),
+		"counts":    countsJSON(q.Counts),
+		"previews":  previews,
+	}
+}
+
+func writeQuestion(w http.ResponseWriter, q *Question) {
+	httpx.WriteJSON(w, http.StatusOK, questionJSON(q))
 }
 
 // Counts handles GET /api/decks/{id}/study/counts.
@@ -209,6 +266,8 @@ func writeStudyError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, cards.ErrNotFound), errors.Is(err, notes.ErrNotFound):
 		httpx.WriteError(w, http.StatusNotFound, "card not found")
+	case errors.Is(err, decks.ErrNotFound):
+		httpx.WriteError(w, http.StatusNotFound, "deck not found")
 	case errors.Is(err, cards.ErrStaleReview):
 		httpx.WriteError(w, http.StatusConflict, "this card was already answered")
 	case errors.Is(err, ErrCardSuspended):
