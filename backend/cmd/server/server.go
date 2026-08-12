@@ -90,11 +90,30 @@ func newServer(database *db.DB, cfg Config) (http.Handler, error) {
 	mux.Handle("/", uiHandler())
 
 	var handler http.Handler = mux
+	handler = limitBodies(handler)
 	handler = securityHeaders(handler)
 	if cfg.TrustProxy {
 		handler = httpx.TrustProxy(handler)
 	}
 	return handler, nil
+}
+
+// maxJSONBody caps every request body except image uploads. Card fields are
+// markdown a person typed; a megabyte of it is not a card, it is a payload.
+const maxJSONBody = 1 << 20
+
+// limitBodies stops a request body from buffering unbounded memory. The
+// unauthenticated login and setup endpoints would otherwise decode an
+// arbitrarily large JSON string from anyone. Image uploads are exempt — they
+// enforce their own, larger limit.
+func limitBodies(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		isUpload := r.Method == http.MethodPost && r.URL.Path == "/api/images"
+		if r.Body != nil && !isUpload {
+			r.Body = http.MaxBytesReader(w, r.Body, maxJSONBody)
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // securityHeaders applies the headers that apply to every response.

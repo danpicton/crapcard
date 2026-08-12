@@ -3,8 +3,10 @@ package auth
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/danpicton/crapcard/internal/httpx"
 )
@@ -16,14 +18,22 @@ const sessionCookieName = "session"
 // flows accept.
 const MinPasswordLength = 8
 
+// MaxPasswordLength is the longest password accepted, in bytes — bcrypt's
+// own hard limit. Rejecting it here turns what would be an opaque 500 into a
+// clear 400.
+const MaxPasswordLength = 72
+
 // Handler holds HTTP handlers for auth endpoints.
 type Handler struct {
-	svc *Service
+	svc      *Service
+	throttle *loginThrottle
+	// now is overridable so throttle tests can move time.
+	now func() time.Time
 }
 
 // NewHandler creates a new auth Handler.
 func NewHandler(svc *Service) *Handler {
-	return &Handler{svc: svc}
+	return &Handler{svc: svc, throttle: newLoginThrottle(), now: time.Now}
 }
 
 // isHTTPS reports whether the request arrived over HTTPS — either directly
@@ -52,8 +62,16 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Backoff before bcrypt: a throttled guess must not even cost a hash.
+	if wait := h.throttle.retryIn(req.Username, h.now()); wait > 0 {
+		w.Header().Set("Retry-After", fmt.Sprintf("%d", int(wait.Seconds())+1))
+		writeError(w, http.StatusTooManyRequests, "too many failed attempts — try again shortly")
+		return
+	}
+
 	sess, err := h.svc.Login(r.Context(), req.Username, req.Password)
 	if errors.Is(err, ErrInvalidCredentials) {
+		h.throttle.fail(req.Username, h.now())
 		slog.Warn("audit: login failed",
 			"event", "login_failed",
 			"username", req.Username,
@@ -68,6 +86,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.throttle.success(req.Username)
 	slog.Info("audit: login succeeded",
 		"event", "login_succeeded",
 		"username", req.Username,
@@ -148,6 +167,10 @@ func (h *Handler) Setup(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(req.Password) < MinPasswordLength {
 		writeError(w, http.StatusBadRequest, "password must be at least 8 characters")
+		return
+	}
+	if len(req.Password) > MaxPasswordLength {
+		writeError(w, http.StatusBadRequest, "password must be at most 72 bytes")
 		return
 	}
 

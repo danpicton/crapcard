@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/danpicton/crapcard/internal/auth"
 )
@@ -76,6 +77,61 @@ func TestLoginRejectsBadCredentialsWithoutCookie(t *testing.T) {
 	}
 	if c := sessionCookie(t, rec.Result()); c != nil && c.Value != "" {
 		t.Fatalf("session cookie issued on a failed login")
+	}
+}
+
+func TestLoginThrottlesRepeatedFailures(t *testing.T) {
+	// bcrypt alone is the only per-guess cost otherwise; an online dictionary
+	// attack should hit a wall, and the wall should get further away.
+	h, svc := testHandler(t)
+	if err := svc.SeedAdmin(context.Background(), "dan", "hunter2hunter2"); err != nil {
+		t.Fatalf("SeedAdmin: %v", err)
+	}
+	now := time.Now()
+	h.SetNowForTest(func() time.Time { return now })
+
+	attempt := func(password string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/login",
+			strings.NewReader(`{"username":"dan","password":"`+password+`"}`))
+		rec := httptest.NewRecorder()
+		h.Login(rec, req)
+		return rec
+	}
+
+	for range 6 {
+		if rec := attempt("wrong-wrong"); rec.Code != http.StatusUnauthorized && rec.Code != http.StatusTooManyRequests {
+			t.Fatalf("failed attempt = %d", rec.Code)
+		}
+	}
+
+	// Even the right password is refused while throttled — the throttle must
+	// not be an oracle.
+	rec := attempt("hunter2hunter2")
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d during backoff, want 429", rec.Code)
+	}
+	if rec.Header().Get("Retry-After") == "" {
+		t.Fatalf("429 without Retry-After")
+	}
+
+	// Once the backoff lapses, the real password works again.
+	now = now.Add(10 * time.Minute)
+	if rec := attempt("hunter2hunter2"); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d after backoff lapsed, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestSetupRejectsAPasswordBeyondBcryptsLimit(t *testing.T) {
+	// bcrypt refuses >72 bytes; without this check the user gets an opaque
+	// 500 instead of being told what is wrong.
+	h, _ := testHandler(t)
+	long := strings.Repeat("a", 73)
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/setup",
+		strings.NewReader(`{"username":"dan","password":"`+long+`"}`))
+	rec := httptest.NewRecorder()
+	h.Setup(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
 	}
 }
 
