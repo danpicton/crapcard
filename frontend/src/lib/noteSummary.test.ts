@@ -8,9 +8,9 @@ describe('summariseMarkdown', () => {
 		expect(summariseMarkdown('~~struck~~')).toBe('struck');
 	});
 
-	it('describes an image by its alt text, matching the preview', () => {
-		expect(summariseMarkdown('![the femur](/api/images/a?w=300)')).toBe('[the femur]');
-		expect(summariseMarkdown('![](/api/images/a)')).toBe('[image]');
+	it('describes an image by its alt text, and says when there is none', () => {
+		expect(summariseMarkdown('![the femur](/api/images/a?w=300)')).toBe('image: the femur');
+		expect(summariseMarkdown('![](/api/images/a)')).toBe('image: no alt text');
 	});
 
 	it('keeps link text and drops the target', () => {

@@ -18,9 +18,10 @@ export function summariseMarkdown(value: string): string {
 	const line = value.split('\n').find((l) => l.trim() !== '') ?? '';
 
 	const flattened = line
-		// Images first, so their alt text is not mistaken for link text.
+		// Images first, so their alt text is not mistaken for link text. An
+		// undescribed image says so explicitly — that is how you notice.
 		.replace(/!\[([^\]]*)\]\([^)]*\)/g, (_match, alt: string) =>
-			alt.trim() ? `[${alt.trim()}]` : '[image]',
+			alt.trim() ? `image: ${alt.trim()}` : 'image: no alt text',
 		)
 		// Links keep their text, lose their target.
 		.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')

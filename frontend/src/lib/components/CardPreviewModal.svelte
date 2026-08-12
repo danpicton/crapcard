@@ -21,6 +21,9 @@
 	let cards = $state<CardPreview[] | null>(null);
 	let error = $state<string | null>(null);
 	let modalEl = $state<HTMLElement | null>(null);
+	// A bidirectional note shows one card at a time; the other is a click
+	// away rather than doubling the modal's height.
+	let activeIndex = $state(0);
 
 	// Focus lands in the dialog on open, so Escape and screen readers see it.
 	$effect(() => {
@@ -78,26 +81,41 @@
 			<p class="muted">Building the preview…</p>
 		{:else}
 			{#if cards.length > 1}
-				<p class="muted small note-kind">
-					<BidirectionalIcon />
-					This note makes {cards.length} cards.
-				</p>
+				<div class="card-tabs" role="tablist" aria-label="Cards of this note">
+					<span class="note-kind muted small"><BidirectionalIcon /></span>
+					{#each cards as card, i (card.template)}
+						<button
+							type="button"
+							role="tab"
+							class="tab"
+							class:active={i === activeIndex}
+							aria-selected={i === activeIndex}
+							onclick={() => (activeIndex = i)}
+						>
+							{label(card.template)}
+						</button>
+					{/each}
+				</div>
 			{/if}
 
-			{#each cards as card (card.template)}
-				<section class="preview-card">
-					<h3>{label(card.template)}</h3>
+			{#if cards[activeIndex]}
+				{#key cards[activeIndex].template}
+					<section class="preview-card">
+						{#if cards.length === 1}
+							<h3>{label(cards[activeIndex].template)}</h3>
+						{/if}
 
-					<div class="face">
-						<span class="face-label">Asks</span>
-						<Editor value={card.question} readonly />
-					</div>
-					<div class="face">
-						<span class="face-label">Answer</span>
-						<Editor value={card.answer} readonly />
-					</div>
-				</section>
-			{/each}
+						<div class="face">
+							<span class="face-label">Asks</span>
+							<Editor value={cards[activeIndex].question} readonly />
+						</div>
+						<div class="face">
+							<span class="face-label">Answer</span>
+							<Editor value={cards[activeIndex].answer} readonly />
+						</div>
+					</section>
+				{/key}
+			{/if}
 		{/if}
 	</div>
 </div>
@@ -149,8 +167,34 @@
 	.note-kind {
 		display: flex;
 		align-items: center;
-		gap: 0.375rem;
+	}
+
+	.card-tabs {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
 		margin: 0 0 1rem;
+	}
+
+	.tab {
+		font: inherit;
+		font-size: 0.8125rem;
+		padding: 0.25rem 0.75rem;
+		border: 1px solid var(--border);
+		border-radius: 999px;
+		background: var(--bg);
+		color: var(--text-2);
+		cursor: pointer;
+	}
+
+	.tab:hover {
+		background: var(--bg-hover);
+	}
+
+	.tab.active {
+		border-color: var(--accent);
+		color: var(--text);
+		font-weight: 600;
 	}
 
 	.preview-card {

@@ -27,9 +27,10 @@ the two apps look and feel like siblings.
   restore its natural size), and describe it in the alt-text box that appears
   on hover.
 - **Preview.** See every card a note produces, exactly as review will ask them,
-  images rendered and all. In the note *list*, images flatten to their alt
-  text (`[alt]`, or `[image]` when undescribed), so a missing description is
-  still easy to spot.
+  images rendered and all. A bidirectional note previews one card at a time,
+  the other a click away. In the note *list*, images flatten to
+  `image: <alt text>` — or `image: no alt text` — so a missing description
+  is easy to spot.
 - **Autosave.** The card editor saves itself as you type — a new card is
   created the moment both sides have content, and every pause persists the
   latest wording. The only buttons left are Done and Preview.

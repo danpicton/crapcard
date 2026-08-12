@@ -119,17 +119,6 @@
 			{/if}
 			{#if session.reviewed > 0}
 				<span class="muted small">{session.reviewed} reviewed</span>
-				{#if session.canUndo}
-					<button
-						type="button"
-						class="link undo"
-						disabled={session.submitting}
-						onclick={() => session.undo()}
-						title="Take back the last answer (U)"
-					>
-						Undo
-					</button>
-				{/if}
 			{/if}
 		</p>
 	</div>
@@ -200,6 +189,9 @@
 					class="answer-button {answer.key}"
 					disabled={session.submitting}
 					onclick={() => session.answer(answer.rating)}
+					title="{answer.label} — press [{answer.rating}]{answer.key === 'good'
+						? ' or space'
+						: ''}"
 				>
 					<span class="answer-label">{answer.label}</span>
 					<span class="answer-interval">
@@ -210,10 +202,36 @@
 				</button>
 			{/each}
 		</div>
-		<p class="hint muted small">Press 1–4 to grade, or space for Good. U undoes.</p>
+		{#if session.canUndo}
+			<div class="under-answers">
+				<button
+					type="button"
+					class="link undo"
+					disabled={session.submitting}
+					onclick={() => session.undo()}
+					title="Take back the last answer — press [U]"
+				>
+					Undo
+				</button>
+			</div>
+		{/if}
 	{:else}
-		<button type="button" class="primary reveal" onclick={reveal}> Show answer </button>
-		<p class="hint muted small">Press space to reveal.</p>
+		<button type="button" class="primary reveal" onclick={reveal} title="Press [space]">
+			Show answer
+		</button>
+		{#if session.canUndo}
+			<div class="under-answers">
+				<button
+					type="button"
+					class="link undo"
+					disabled={session.submitting}
+					onclick={() => session.undo()}
+					title="Take back the last answer — press [U]"
+				>
+					Undo
+				</button>
+			</div>
+		{/if}
 	{/if}
 {/if}
 
@@ -254,8 +272,10 @@
 		color: var(--accent-tx);
 	}
 
-	.undo {
-		margin-left: 0.375rem;
+	.under-answers {
+		display: flex;
+		justify-content: flex-end;
+		margin-top: 0.5rem;
 	}
 
 	.card-face {
@@ -380,11 +400,6 @@
 		flex-direction: column;
 		align-items: center;
 		gap: 0.75rem;
-	}
-
-	.hint {
-		text-align: center;
-		margin-top: 0.75rem;
 	}
 
 	.link {

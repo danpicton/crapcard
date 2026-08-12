@@ -490,14 +490,14 @@
 					<div class="note-text">
 						<p class="note-front">{summariseMarkdown(note.fields.front ?? '')}</p>
 						<p class="note-back muted small">{summariseMarkdown(note.fields.back ?? '')}</p>
-						<p class="note-meta muted small">
-							{#if lastStudiedLabel(note.last_studied)}
-								Studied {lastStudiedLabel(note.last_studied)}
-							{:else}
-								Never studied
-							{/if}
-						</p>
 					</div>
+					<p class="note-meta muted">
+						{#if lastStudiedLabel(note.last_studied)}
+							Studied {lastStudiedLabel(note.last_studied)}
+						{:else}
+							Never studied
+						{/if}
+					</p>
 					<div class="note-actions">
 						{#if note.reversed}<BidirectionalIcon />{/if}
 						<button type="button" class="link" onclick={() => (previewNoteId = note.id)}>
@@ -668,11 +668,14 @@
 	}
 
 	.note {
+		position: relative;
 		display: flex;
 		align-items: flex-start;
 		justify-content: space-between;
 		gap: 1rem;
-		padding: 0.75rem;
+		/* The extra bottom padding reserves the corner the studied-stamp
+		   sits in, so a long back line cannot run underneath it. */
+		padding: 0.75rem 0.75rem 1.375rem;
 		border: 1px solid var(--border);
 		border-radius: 4px;
 		background: var(--bg-alt);
@@ -683,7 +686,7 @@
 		align-items: baseline;
 		justify-content: space-between;
 		gap: 1rem;
-		margin-top: 2rem;
+		margin: 2rem 0 0.875rem;
 	}
 
 	.page-size {
@@ -727,8 +730,11 @@
 	}
 
 	.note-meta {
-		margin: 0.375rem 0 0;
-		font-size: 0.75rem;
+		position: absolute;
+		right: 0.75rem;
+		bottom: 0.375rem;
+		margin: 0;
+		font-size: 0.6875rem;
 	}
 
 	.note-front {
