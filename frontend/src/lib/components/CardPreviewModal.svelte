@@ -4,12 +4,12 @@
 	import BidirectionalIcon from '$lib/components/BidirectionalIcon.svelte';
 
 	/**
-	 * Shows every card a note produces, exactly as review will ask them.
+	 * Shows every card a note produces, exactly as review will ask them —
+	 * images included, rendered by the same readonly editor the study screen
+	 * uses.
 	 *
-	 * The rendering comes from the server's own generator rather than being
-	 * re-derived here, so a preview cannot drift from the real thing. Images
-	 * are replaced by a note of their alt text, which makes an undescribed
-	 * image obvious.
+	 * The markdown comes from the server's own generator rather than being
+	 * re-derived here, so a preview cannot drift from the real thing.
 	 */
 	interface Props {
 		noteId: number;

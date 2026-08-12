@@ -200,9 +200,9 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 //
 // It exists so an author can check a card reads correctly without studying
 // it, and it renders through the same generator review uses, so a preview
-// cannot drift from what will actually be asked. Images are replaced by a
-// description of their alt text — which doubles as a way to spot images
-// nobody has described.
+// cannot drift from what will actually be asked. The markdown comes back
+// verbatim — images and all — and the client renders it exactly as the study
+// screen would.
 func (h *Handler) Preview(w http.ResponseWriter, r *http.Request) {
 	u := auth.UserFromContext(r.Context())
 	id, ok := httpx.PathID(r, "id")
@@ -236,8 +236,8 @@ func (h *Handler) Preview(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, map[string]any{
 			"template": spec.Template,
-			"question": PreviewMarkdown(rendered.Question),
-			"answer":   PreviewMarkdown(rendered.Answer),
+			"question": rendered.Question,
+			"answer":   rendered.Answer,
 		})
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)

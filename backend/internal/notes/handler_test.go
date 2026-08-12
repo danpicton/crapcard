@@ -429,11 +429,14 @@ func TestPreviewEndpointRendersEveryCardTheNoteProduces(t *testing.T) {
 	}
 }
 
-func TestPreviewDescribesImagesByTheirAltText(t *testing.T) {
+func TestPreviewCarriesImagesThroughVerbatim(t *testing.T) {
+	// The preview shows the card the way review will show it, and review
+	// renders the images — so the markdown must arrive untouched.
 	e := newRepoEnv(t)
 	front := "What is this? ![the femur](/api/images/abc?w=300)"
+	back := "A thigh bone ![](/api/images/def)"
 	n, err := e.repo.Create(context.Background(), e.user,
-		basicInput(e.deck, front, "A thigh bone ![](/api/images/def)", false))
+		basicInput(e.deck, front, back, false))
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -446,11 +449,11 @@ func TestPreviewDescribesImagesByTheirAltText(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if got[0].Question != `What is this? *image:* "the femur"` {
-		t.Fatalf("question = %q", got[0].Question)
+	if got[0].Question != front {
+		t.Fatalf("question = %q, want the markdown verbatim", got[0].Question)
 	}
-	if got[0].Answer != `A thigh bone *image:* no alt text` {
-		t.Fatalf("answer = %q", got[0].Answer)
+	if got[0].Answer != back {
+		t.Fatalf("answer = %q, want the markdown verbatim", got[0].Answer)
 	}
 }
 
