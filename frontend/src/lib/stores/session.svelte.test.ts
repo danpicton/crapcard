@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createSession } from './session.svelte';
-import type { StudyCard, AnswerResult } from '$lib/api';
+import { ApiError, type StudyCard, type AnswerResult } from '$lib/api';
 
 function card(overrides: Partial<StudyCard> = {}): StudyCard {
 	return {
@@ -40,6 +40,8 @@ describe('study session', () => {
 		nextCard: ReturnType<typeof vi.fn>;
 		answerCard: ReturnType<typeof vi.fn>;
 		undoAnswer: ReturnType<typeof vi.fn>;
+		queueAnswer: ReturnType<typeof vi.fn>;
+		flushOutbox: ReturnType<typeof vi.fn>;
 	};
 
 	beforeEach(() => {
@@ -47,6 +49,8 @@ describe('study session', () => {
 			nextCard: vi.fn().mockResolvedValue(card()),
 			answerCard: vi.fn().mockResolvedValue(answerResult()),
 			undoAnswer: vi.fn().mockResolvedValue(card()),
+			queueAnswer: vi.fn(),
+			flushOutbox: vi.fn().mockResolvedValue(undefined),
 		};
 	});
 
@@ -269,5 +273,100 @@ describe('study session', () => {
 
 		expect(s.canUndo).toBe(false);
 		expect(s.error).toBeNull();
+	});
+});
+
+describe('study session while offline', () => {
+	let deps: {
+		nextCard: ReturnType<typeof vi.fn>;
+		answerCard: ReturnType<typeof vi.fn>;
+		undoAnswer: ReturnType<typeof vi.fn>;
+		queueAnswer: ReturnType<typeof vi.fn>;
+		flushOutbox: ReturnType<typeof vi.fn>;
+	};
+	const networkDown = new ApiError(0, 'network error');
+
+	beforeEach(() => {
+		deps = {
+			nextCard: vi.fn().mockResolvedValue(card()),
+			answerCard: vi.fn().mockResolvedValue(answerResult()),
+			undoAnswer: vi.fn().mockResolvedValue(card()),
+			queueAnswer: vi.fn(),
+			flushOutbox: vi.fn().mockResolvedValue(undefined),
+		};
+	});
+
+	it('parks an answer the network refused and stalls instead of erroring', async () => {
+		const s = createSession(1, deps);
+		await s.start();
+		s.reveal();
+
+		deps.answerCard.mockRejectedValue(networkDown);
+		await s.answer(3);
+
+		expect(deps.queueAnswer).toHaveBeenCalledWith(1, 3);
+		expect(s.stalled).toBe(true);
+		expect(s.error).toBeNull();
+		expect(s.reviewed).toBe(1);
+	});
+
+	it('refuses further grading and undo while stalled', async () => {
+		const s = createSession(1, deps);
+		await s.start();
+		s.reveal();
+		deps.answerCard.mockRejectedValue(networkDown);
+		await s.answer(3);
+
+		deps.answerCard.mockResolvedValue(answerResult());
+		await s.answer(4);
+		await s.undo();
+
+		expect(deps.answerCard).toHaveBeenCalledTimes(1);
+		expect(deps.undoAnswer).not.toHaveBeenCalled();
+	});
+
+	it('resume flushes the outbox before asking for the next card', async () => {
+		const order: string[] = [];
+		deps.flushOutbox.mockImplementation(async () => {
+			order.push('flush');
+		});
+
+		const s = createSession(1, deps);
+		await s.start();
+		s.reveal();
+		deps.answerCard.mockRejectedValue(networkDown);
+		await s.answer(3);
+
+		deps.nextCard.mockImplementation(async () => {
+			order.push('next');
+			return card({ card_id: 2 });
+		});
+		await s.resume();
+
+		expect(order).toEqual(['flush', 'next']);
+		expect(s.stalled).toBe(false);
+		expect(s.card?.card_id).toBe(2);
+	});
+
+	it('stalls quietly when even the first card cannot be fetched', async () => {
+		deps.nextCard.mockRejectedValue(networkDown);
+		const s = createSession(1, deps);
+		await s.start();
+
+		expect(s.stalled).toBe(true);
+		expect(s.error).toBeNull();
+	});
+
+	it('a server rejection is still an error, not a stall', async () => {
+		const s = createSession(1, deps);
+		await s.start();
+		s.reveal();
+
+		deps.answerCard.mockRejectedValue(new ApiError(409, 'already answered'));
+		await s.answer(3);
+
+		expect(s.stalled).toBe(false);
+		expect(deps.queueAnswer).not.toHaveBeenCalled();
+		expect(s.error).toContain('already answered');
 	});
 });

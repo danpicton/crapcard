@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { createSession } from '$lib/stores/session.svelte';
+	import { sync } from '$lib/stores/sync.svelte';
 	import { Rating } from '$lib/api';
 	import Editor from '$lib/components/Editor.svelte';
 
@@ -43,6 +44,14 @@
 	onMount(() => {
 		void session.start();
 		window.addEventListener('keydown', onKeydown);
+	});
+
+	// The moment the connection returns, replay the queued answers and pick
+	// the session back up without the user having to do anything.
+	$effect(() => {
+		if (sync.online && session.stalled && !session.submitting) {
+			void session.resume();
+		}
 	});
 
 	onDestroy(() => {
@@ -123,7 +132,21 @@
 	<p class="error">{session.error}</p>
 {/if}
 
-{#if session.loading && !session.card}
+{#if session.stalled}
+	<div class="offline-note">
+		<p>
+			<strong>You're offline.</strong>
+			{#if sync.pendingAnswers > 0}
+				{sync.pendingAnswers}
+				{sync.pendingAnswers === 1 ? 'answer is' : 'answers are'} saved and will sync.
+			{:else}
+				Nothing is lost.
+			{/if}
+			The session continues as soon as the connection returns.
+		</p>
+		<button type="button" class="secondary" onclick={() => session.resume()}> Try now </button>
+	</div>
+{:else if session.loading && !session.card}
 	<p class="muted">Loading…</p>
 {:else if session.finished}
 	<div class="done">
@@ -387,6 +410,39 @@
 		background: var(--danger-bg);
 		padding: 0.5rem 0.75rem;
 		border-radius: 4px;
+	}
+
+	.offline-note {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+		border: 1px solid var(--border-md);
+		border-radius: 6px;
+		background: var(--bg-alt);
+		padding: 1rem;
+		margin: 1.5rem 0;
+	}
+
+	.offline-note p {
+		margin: 0;
+		color: var(--text-2);
+	}
+
+	.secondary {
+		font: inherit;
+		font-size: 0.875rem;
+		padding: 0.4rem 0.9rem;
+		border: 1px solid var(--border-md);
+		border-radius: 4px;
+		background: var(--bg);
+		color: var(--text);
+		cursor: pointer;
+		flex-shrink: 0;
+	}
+
+	.secondary:hover {
+		background: var(--bg-hover);
 	}
 
 	@media (max-width: 640px) {

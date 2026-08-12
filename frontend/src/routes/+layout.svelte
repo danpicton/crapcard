@@ -5,6 +5,7 @@
 	import { theme } from '$lib/stores/theme.svelte';
 	import { auth } from '$lib/stores/auth.svelte';
 	import { prefs } from '$lib/stores/prefs.svelte';
+	import { sync } from '$lib/stores/sync.svelte';
 	import { api } from '$lib/api';
 
 	let { children } = $props();
@@ -16,6 +17,7 @@
 
 	onMount(async () => {
 		theme.init();
+		sync.init();
 		await auth.refresh();
 		if (auth.signedIn) await prefs.load();
 
@@ -41,6 +43,16 @@
 <div class="app">
 	<header class="topbar">
 		<a class="wordmark" href="/">crapcard</a>
+
+		{#if !sync.online}
+			<span class="sync-badge offline" title="Changes are queued and will sync when the connection returns">
+				● Offline{sync.pending > 0 ? ` · ${sync.pending} queued` : ''}
+			</span>
+		{:else if sync.flushing}
+			<span class="sync-badge">Syncing…</span>
+		{:else if sync.pending > 0}
+			<span class="sync-badge">{sync.pending} to sync</span>
+		{/if}
 
 		{#if auth.signedIn}
 			<nav>
@@ -85,6 +97,22 @@
 		letter-spacing: -0.02em;
 		color: var(--text);
 		text-decoration: none;
+	}
+
+	/* Quiet when all is well; the badge only appears when something is
+	   queued, syncing, or the network is away. */
+	.sync-badge {
+		font-size: 0.75rem;
+		padding: 0.125rem 0.5rem;
+		border-radius: 999px;
+		background: var(--bg-hover);
+		color: var(--text-2);
+		margin-right: auto;
+	}
+
+	.sync-badge.offline {
+		color: var(--danger);
+		background: var(--danger-bg);
 	}
 
 	nav {

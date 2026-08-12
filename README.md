@@ -26,10 +26,21 @@ the two apps look and feel like siblings.
   itself in the card. Drag the corner to resize it (double-click the handle to
   restore its natural size), and describe it in the alt-text box that appears
   on hover.
-- **Preview.** See every card a note produces, exactly as review will ask them.
-  Images show as `*image:* "alt text"`, so an undescribed one is obvious.
+- **Preview.** See every card a note produces, exactly as review will ask them,
+  images rendered and all. In the note *list*, images flatten to their alt
+  text (`[alt]`, or `[image]` when undescribed), so a missing description is
+  still easy to spot.
+- **Autosave.** The card editor saves itself as you type — a new card is
+  created the moment both sides have content, and every pause persists the
+  latest wording. The only buttons left are Done and Preview.
 - **Decks.** A note belongs to one deck; study sessions are per-deck, with a
   paginated card list.
+- **Offline, without losing anything.** A service worker keeps the app shell
+  openable with no network, and everything that must reach the server —
+  answers, autosaved edits, new cards — goes into a persistent outbox when
+  offline, replayed in order on reconnect. The top bar shows offline/syncing
+  state, and a study session pauses mid-card and resumes by itself when the
+  connection returns.
 - **FSRS scheduling.** Each answer feeds the algorithm; the four answer buttons
   are labelled with the interval each would produce. Review cards are due at
   day granularity in *your* timezone — a card due at 14:00 shows up in the

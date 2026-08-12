@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
 	import { page } from '$app/state';
-	import { api, type Deck, type Note, type QueueCounts } from '$lib/api';
+	import { api, ApiError, type Deck, type Note, type QueueCounts } from '$lib/api';
 	import { prefs } from '$lib/stores/prefs.svelte';
+	import { sync } from '$lib/stores/sync.svelte';
 	import { summariseMarkdown, pageSizeOptionsFor } from '$lib/noteSummary';
 	import Editor from '$lib/components/Editor.svelte';
 	import BidirectionalIcon from '$lib/components/BidirectionalIcon.svelte';
@@ -35,11 +36,148 @@
 	let front = $state('');
 	let back = $state('');
 	let reversed = $state(false);
-	// What the note's reversed flag was when editing began, so switching it
+	// What the note's reversed flag was at the last save, so switching it
 	// off can warn about the review history it would delete.
 	let wasReversed = $state(false);
-	let saving = $state(false);
 	let composerEl = $state<HTMLElement | null>(null);
+	// Editors are keyed on this, not on editingId: an autosave that creates
+	// the note mid-typing must not remount them and eat the cursor.
+	let composerKey = $state(0);
+
+	// ── Autosave ────────────────────────────────────────────────────────
+	// The composer saves itself: a pause in typing is the save button.
+	type SaveStatus = 'idle' | 'saving' | 'saved' | 'queued' | 'incomplete' | 'failed';
+	let saveStatus = $state<SaveStatus>('idle');
+	let saveTimer: ReturnType<typeof setTimeout> | null = null;
+	// Content as of the last successful (or queued) save, to tell a real
+	// edit from the composer merely being populated.
+	let lastSaved = { front: '', back: '', reversed: false };
+	// Outbox ref for a note first created while offline, until its real id
+	// arrives from a flush.
+	let pendingCreateRef = $state<string | null>(null);
+	// Whether this composer session started from "Add card" — closing then
+	// jumps to page one, where the new card lands.
+	let startedNew = $state(false);
+
+	const AUTOSAVE_DEBOUNCE_MS = 1200;
+
+	const saveLabel: Record<SaveStatus, string> = {
+		idle: '',
+		saving: 'Saving…',
+		saved: 'Saved',
+		queued: 'Saved offline — will sync',
+		incomplete: 'Waiting for both sides',
+		failed: 'Could not save',
+	};
+
+	$effect(() => {
+		// Read the fields so the effect re-runs on every edit.
+		const snapshot = { front, back, reversed };
+		if (!composing) return;
+		if (
+			snapshot.front === lastSaved.front &&
+			snapshot.back === lastSaved.back &&
+			snapshot.reversed === lastSaved.reversed
+		) {
+			return;
+		}
+		if (saveTimer !== null) clearTimeout(saveTimer);
+		saveTimer = setTimeout(() => void autosave(), AUTOSAVE_DEBOUNCE_MS);
+	});
+
+	// A note created while offline gets its real id when the outbox flushes;
+	// adopt it so further edits become ordinary updates.
+	$effect(() => {
+		if (pendingCreateRef === null) return;
+		const id = sync.createdIdFor(pendingCreateRef);
+		if (id !== null) {
+			editingId = id;
+			pendingCreateRef = null;
+		}
+	});
+
+	async function autosave() {
+		if (!composing) return;
+		if (!front.trim() || !back.trim()) {
+			saveStatus = 'incomplete';
+			return;
+		}
+
+		const snapshot = { front, back, reversed };
+		const fields = { front: snapshot.front, back: snapshot.back };
+		saveStatus = 'saving';
+		try {
+			if (pendingCreateRef !== null) {
+				// Still waiting offline for the create to flush: refresh it.
+				sync.queueNoteCreate(pendingCreateRef, {
+					deck_id: deckId,
+					type: 'basic',
+					reversed: snapshot.reversed,
+					fields,
+				});
+				saveStatus = 'queued';
+			} else if (editingId === null) {
+				const note = await api.createNote({
+					deck_id: deckId,
+					type: 'basic',
+					reversed: snapshot.reversed,
+					fields,
+				});
+				editingId = note.id;
+				saveStatus = 'saved';
+			} else {
+				await api.updateNote(editingId, { deck_id: deckId, reversed: snapshot.reversed, fields });
+				saveStatus = 'saved';
+			}
+			lastSaved = snapshot;
+			wasReversed = snapshot.reversed;
+		} catch (err) {
+			if (err instanceof ApiError && err.status === 0) {
+				// Offline: park the save and keep typing.
+				sync.markOffline();
+				if (editingId !== null) {
+					sync.queueNoteUpdate(editingId, {
+						deck_id: deckId,
+						reversed: snapshot.reversed,
+						fields,
+					});
+				} else {
+					pendingCreateRef = crypto.randomUUID();
+					sync.queueNoteCreate(pendingCreateRef, {
+						deck_id: deckId,
+						type: 'basic',
+						reversed: snapshot.reversed,
+						fields,
+					});
+				}
+				lastSaved = snapshot;
+				wasReversed = snapshot.reversed;
+				saveStatus = 'queued';
+			} else {
+				saveStatus = 'failed';
+				error = err instanceof Error ? err.message : 'could not save the card';
+			}
+		}
+	}
+
+	/** Turning bidirectional off deletes the reverse card outright —
+	 * including every review it has ever been given. Not a silent change. */
+	function onReversedToggle(event: Event) {
+		const box = event.target as HTMLInputElement;
+		if (
+			wasReversed &&
+			!box.checked &&
+			editingId !== null &&
+			!confirm(
+				'Turning off bidirectional deletes the reverse card and all of its review history. Continue?',
+			)
+		) {
+			box.checked = true;
+			reversed = true;
+			return;
+		}
+		reversed = box.checked;
+	}
 
 	// Deck header editing.
 	let editingDeck = $state(false);
@@ -113,68 +251,62 @@
 
 	function startNew() {
 		editingId = null;
+		pendingCreateRef = null;
 		front = '';
 		back = '';
 		reversed = false;
 		wasReversed = false;
+		lastSaved = { front: '', back: '', reversed: false };
+		saveStatus = 'idle';
+		startedNew = true;
+		composerKey += 1;
 		composing = true;
 		void revealComposer();
 	}
 
 	function startEdit(note: Note) {
 		editingId = note.id;
+		pendingCreateRef = null;
 		front = note.fields.front ?? '';
 		back = note.fields.back ?? '';
 		reversed = note.reversed;
 		wasReversed = note.reversed;
+		lastSaved = { front, back, reversed };
+		saveStatus = 'idle';
+		startedNew = false;
+		composerKey += 1;
 		composing = true;
 		void revealComposer();
 	}
 
-	function cancel() {
+	/** Close the composer: flush any pending edit, then refresh the list. */
+	async function done() {
+		if (saveTimer !== null) {
+			clearTimeout(saveTimer);
+			saveTimer = null;
+		}
+		await autosave();
+		if (saveStatus === 'failed') return; // Leave the composer open to retry.
+		const created = startedNew && (editingId !== null || pendingCreateRef !== null);
 		composing = false;
 		editingId = null;
+		pendingCreateRef = null;
+		if (created) {
+			// The list is newest first, so a new card lands on page one.
+			offset = 0;
+		}
+		await load();
 	}
 
-	async function save() {
-		if (!front.trim() || !back.trim()) {
-			error = 'Both sides are required.';
-			return;
+	/** Abandon a card that never had enough content to be created. */
+	function discard() {
+		if (saveTimer !== null) {
+			clearTimeout(saveTimer);
+			saveTimer = null;
 		}
-		// Turning bidirectional off deletes the reverse card outright —
-		// including every review it has ever been given. That is not a
-		// wording tweak, so it does not happen silently.
-		if (
-			editingId !== null &&
-			wasReversed &&
-			!reversed &&
-			!confirm(
-				'Turning off bidirectional deletes the reverse card and all of its review history. Continue?',
-			)
-		) {
-			return;
-		}
-
-		saving = true;
-		error = null;
-		try {
-			const fields = { front, back };
-			if (editingId === null) {
-				await api.createNote({ deck_id: deckId, type: 'basic', reversed, fields });
-				// The list is newest first, so a new card lands on page one.
-				// Staying put would save it out of sight.
-				offset = 0;
-			} else {
-				await api.updateNote(editingId, { deck_id: deckId, reversed, fields });
-			}
-			composing = false;
-			editingId = null;
-			await load();
-		} catch (err) {
-			error = err instanceof Error ? err.message : 'could not save the card';
-		} finally {
-			saving = false;
-		}
+		composing = false;
+		editingId = null;
+		pendingCreateRef = null;
 	}
 
 	function startDeckEdit() {
@@ -269,12 +401,12 @@
 
 	{#if composing}
 		<section class="composer" bind:this={composerEl}>
-			<h2>{editingId === null ? 'New card' : 'Edit card'}</h2>
+			<h2>{startedNew ? 'New card' : 'Edit card'}</h2>
 
 			<label class="field">
 				<span>Front</span>
 				<div class="editor-shell">
-					{#key editingId ?? 'new'}
+					{#key composerKey}
 						<Editor
 							bind:value={front}
 							placeholder="Front of the card — paste an image straight in"
@@ -287,7 +419,7 @@
 			<label class="field">
 				<span>Back</span>
 				<div class="editor-shell">
-					{#key editingId ?? 'new'}
+					{#key composerKey}
 						<Editor
 							bind:value={back}
 							placeholder="Back of the card"
@@ -298,7 +430,7 @@
 			</label>
 
 			<label class="checkbox">
-				<input type="checkbox" bind:checked={reversed} />
+				<input type="checkbox" checked={reversed} onchange={onReversedToggle} />
 				<span class="checkbox-label">
 					<BidirectionalIcon />
 					Bidirectional
@@ -307,18 +439,20 @@
 			</label>
 
 			<div class="composer-actions">
-				<button type="button" class="primary" disabled={saving} onclick={save}>
-					{saving ? 'Saving…' : 'Save'}
-				</button>
+				<button type="button" class="primary" onclick={done}>Done</button>
 				{#if editingId !== null}
 					<button type="button" class="secondary" onclick={() => (previewNoteId = editingId)}>
 						Preview
 					</button>
+				{:else if pendingCreateRef === null}
+					<button type="button" class="link" onclick={discard}>Discard</button>
 				{/if}
-				<button type="button" class="link" onclick={cancel}>Cancel</button>
+				<span class="save-status muted small" role="status">{saveLabel[saveStatus]}</span>
 			</div>
-			{#if editingId === null}
-				<p class="muted small hint">Save the card to preview how it will be asked.</p>
+			{#if editingId === null && pendingCreateRef === null}
+				<p class="muted small hint">
+					Saves itself as you type, once both sides have something on them.
+				</p>
 			{/if}
 		</section>
 	{/if}
@@ -518,6 +652,10 @@
 		display: flex;
 		align-items: center;
 		gap: 0.75rem;
+	}
+
+	.save-status {
+		margin-left: auto;
 	}
 
 	.notes {
