@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/danpicton/crapcard/internal/cards"
+	"github.com/danpicton/crapcard/internal/decks"
 	"github.com/danpicton/crapcard/internal/notes"
 	"github.com/danpicton/crapcard/internal/srs"
 )
@@ -29,9 +30,12 @@ type Preview struct {
 
 // Question is the next card to study, rendered and ready to show.
 type Question struct {
-	CardID   int64
-	NoteID   int64
-	DeckID   int64
+	CardID int64
+	NoteID int64
+	DeckID int64
+	// DeckName is filled in so a session the user did not explicitly start —
+	// landing on a card straight after signing in — can say which deck it is.
+	DeckName string
 	Template string
 	Question string
 	Answer   string
@@ -53,12 +57,37 @@ type AnswerResult struct {
 type Service struct {
 	notes *notes.Repository
 	cards *cards.Repository
+	decks *decks.Repository
 	sched srs.Scheduler
 }
 
 // NewService creates a study Service scheduling with the given parameters.
-func NewService(noteRepo *notes.Repository, cardRepo *cards.Repository, params srs.Params) *Service {
-	return &Service{notes: noteRepo, cards: cardRepo, sched: srs.NewScheduler(params)}
+func NewService(
+	noteRepo *notes.Repository,
+	cardRepo *cards.Repository,
+	deckRepo *decks.Repository,
+	params srs.Params,
+) *Service {
+	return &Service{
+		notes: noteRepo,
+		cards: cardRepo,
+		decks: deckRepo,
+		sched: srs.NewScheduler(params),
+	}
+}
+
+// NextAnywhere returns the next due card without the caller naming a deck,
+// picking up wherever the user last left off. It backs the landing screen:
+// signing in should put a card in front of you, not a menu.
+func (s *Service) NextAnywhere(ctx context.Context, userID int64, now time.Time) (*Question, error) {
+	deckID, err := s.cards.NextDeckToStudy(ctx, userID, now)
+	if errors.Is(err, cards.ErrNotFound) {
+		return nil, ErrQueueEmpty
+	}
+	if err != nil {
+		return nil, err
+	}
+	return s.Next(ctx, userID, deckID, now)
 }
 
 // Next returns the next due card in the deck, rendered, along with the
@@ -91,10 +120,16 @@ func (s *Service) Next(ctx context.Context, userID, deckID int64, now time.Time)
 		return nil, err
 	}
 
+	deck, err := s.decks.Get(ctx, userID, card.DeckID)
+	if err != nil {
+		return nil, fmt.Errorf("load deck for card %d: %w", card.ID, err)
+	}
+
 	return &Question{
 		CardID:   card.ID,
 		NoteID:   note.ID,
 		DeckID:   card.DeckID,
+		DeckName: deck.Name,
 		Template: card.Template,
 		Question: rendered.Question,
 		Answer:   rendered.Answer,

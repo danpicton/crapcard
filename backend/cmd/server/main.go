@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -28,6 +29,10 @@ func configFrom(getenv func(string) string) (Config, string, string) {
 		// Forwarded headers are spoofable by any client, so honouring them
 		// has to be an explicit deployment decision.
 		TrustProxy: isAffirmative(getenv("TRUST_PROXY")),
+		PageSize:   defaultPageSize,
+	}
+	if n, err := strconv.Atoi(strings.TrimSpace(getenv("CRAPCARD_PAGE_SIZE"))); err == nil && n > 0 {
+		cfg.PageSize = n
 	}
 
 	addr := getenv("CRAPCARD_ADDR")

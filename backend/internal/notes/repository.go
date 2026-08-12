@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/danpicton/crapcard/internal/cards"
@@ -22,14 +23,18 @@ var ErrDeckNotFound = errors.New("deck not found")
 
 // Note is a stored note with its fields.
 type Note struct {
-	ID        int64
-	UserID    int64
-	DeckID    int64
-	Type      NoteType
-	Config    Config
-	Fields    []Field
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID     int64
+	UserID int64
+	DeckID int64
+	Type   NoteType
+	Config Config
+	Fields []Field
+	// LastStudied is the most recent review across the note's cards, or nil
+	// when none has ever been answered. Nil rather than a zero time so the UI
+	// can say "never" instead of printing year 1.
+	LastStudied *time.Time
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // CreateInput is the content needed to author a note.
@@ -180,23 +185,74 @@ func (r *Repository) Update(ctx context.Context, userID, noteID int64, in Update
 	return r.Get(ctx, userID, noteID)
 }
 
-// Get returns one note with its fields.
-func (r *Repository) Get(ctx context.Context, userID, noteID int64) (*Note, error) {
+// noteColumns selects a note along with when it was last studied.
+//
+// last_studied is the newest last_review across the note's cards, computed in
+// the query so listing a page of notes stays one round trip rather than one
+// per note.
+const noteColumns = `n.id, n.user_id, n.deck_id, n.note_type, n.config, n.created_at, n.updated_at,
+	(SELECT MAX(c.last_review) FROM cards c WHERE c.note_id = n.id) AS last_studied`
+
+// sqliteTimeLayouts are the formats go-sqlite3 may have written a timestamp
+// in. An aggregate such as MAX() loses the column's declared type, so the
+// driver hands back a string rather than a time.Time and it has to be parsed
+// here.
+var sqliteTimeLayouts = []string{
+	"2006-01-02 15:04:05.999999999-07:00",
+	"2006-01-02T15:04:05.999999999-07:00",
+	"2006-01-02 15:04:05.999999999",
+	"2006-01-02T15:04:05.999999999",
+	"2006-01-02 15:04:05",
+	"2006-01-02T15:04:05",
+	time.RFC3339Nano,
+	time.RFC3339,
+}
+
+// parseSQLiteTime reads a timestamp that arrived as text.
+func parseSQLiteTime(s string) (time.Time, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}, false
+	}
+	for _, layout := range sqliteTimeLayouts {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t.UTC(), true
+		}
+	}
+	return time.Time{}, false
+}
+
+// scanNote reads a row selected with noteColumns.
+func scanNote(row interface{ Scan(...any) error }) (*Note, error) {
 	n := &Note{}
 	var noteType, cfg string
-	err := r.db.QueryRowContext(ctx,
-		`SELECT id, user_id, deck_id, note_type, config, created_at, updated_at
-		 FROM notes WHERE id=? AND user_id=?`, noteID, userID,
-	).Scan(&n.ID, &n.UserID, &n.DeckID, &noteType, &cfg, &n.CreatedAt, &n.UpdatedAt)
+	// Scanned as text: see sqliteTimeLayouts.
+	var lastStudied sql.NullString
+	if err := row.Scan(&n.ID, &n.UserID, &n.DeckID, &noteType, &cfg,
+		&n.CreatedAt, &n.UpdatedAt, &lastStudied); err != nil {
+		return nil, err
+	}
+	n.Type = NoteType(noteType)
+	if err := json.Unmarshal([]byte(cfg), &n.Config); err != nil {
+		return nil, fmt.Errorf("decode note config: %w", err)
+	}
+	if lastStudied.Valid {
+		if t, ok := parseSQLiteTime(lastStudied.String); ok {
+			n.LastStudied = &t
+		}
+	}
+	return n, nil
+}
+
+// Get returns one note with its fields.
+func (r *Repository) Get(ctx context.Context, userID, noteID int64) (*Note, error) {
+	n, err := scanNote(r.db.QueryRowContext(ctx,
+		`SELECT `+noteColumns+` FROM notes n WHERE n.id=? AND n.user_id=?`, noteID, userID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get note: %w", err)
-	}
-	n.Type = NoteType(noteType)
-	if err := json.Unmarshal([]byte(cfg), &n.Config); err != nil {
-		return nil, fmt.Errorf("decode note config: %w", err)
 	}
 
 	n.Fields, err = r.loadFields(ctx, n.ID)
@@ -206,16 +262,16 @@ func (r *Repository) Get(ctx context.Context, userID, noteID int64) (*Note, erro
 	return n, nil
 }
 
-// List returns the user's notes, newest first, optionally filtered to a deck.
+// List returns the user's notes, newest first, optionally filtered to a deck
+// and windowed by Limit/Offset.
 func (r *Repository) List(ctx context.Context, userID int64, f ListFilter) ([]*Note, error) {
-	query := `SELECT id, user_id, deck_id, note_type, config, created_at, updated_at
-	          FROM notes WHERE user_id=?`
+	query := `SELECT ` + noteColumns + ` FROM notes n WHERE n.user_id=?`
 	args := []any{userID}
 	if f.DeckID > 0 {
-		query += ` AND deck_id=?`
+		query += ` AND n.deck_id=?`
 		args = append(args, f.DeckID)
 	}
-	query += ` ORDER BY created_at DESC, id DESC`
+	query += ` ORDER BY n.created_at DESC, n.id DESC`
 	if f.Limit > 0 {
 		query += ` LIMIT ? OFFSET ?`
 		args = append(args, f.Limit, f.Offset)
@@ -229,14 +285,9 @@ func (r *Repository) List(ctx context.Context, userID int64, f ListFilter) ([]*N
 
 	list := []*Note{}
 	for rows.Next() {
-		n := &Note{}
-		var noteType, cfg string
-		if err := rows.Scan(&n.ID, &n.UserID, &n.DeckID, &noteType, &cfg, &n.CreatedAt, &n.UpdatedAt); err != nil {
+		n, err := scanNote(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scan note: %w", err)
-		}
-		n.Type = NoteType(noteType)
-		if err := json.Unmarshal([]byte(cfg), &n.Config); err != nil {
-			return nil, fmt.Errorf("decode note config: %w", err)
 		}
 		list = append(list, n)
 	}
@@ -250,6 +301,23 @@ func (r *Repository) List(ctx context.Context, userID int64, f ListFilter) ([]*N
 		}
 	}
 	return list, nil
+}
+
+// Count returns how many notes match the filter, ignoring Limit and Offset —
+// it is the total a paginated listing reports, not the size of one page.
+func (r *Repository) Count(ctx context.Context, userID int64, f ListFilter) (int, error) {
+	query := `SELECT COUNT(*) FROM notes WHERE user_id=?`
+	args := []any{userID}
+	if f.DeckID > 0 {
+		query += ` AND deck_id=?`
+		args = append(args, f.DeckID)
+	}
+
+	var n int
+	if err := r.db.QueryRowContext(ctx, query, args...).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count notes: %w", err)
+	}
+	return n, nil
 }
 
 // Delete removes a note; its fields, cards and review history cascade.

@@ -12,8 +12,13 @@ import (
 	"github.com/danpicton/crapcard/internal/httpx"
 )
 
-// DefaultListLimit caps an unbounded note listing.
-const DefaultListLimit = 200
+// DefaultListLimit is the page size used when the client does not ask for one.
+const DefaultListLimit = 50
+
+// MaxListLimit is the largest page a client may request. A caller asking for
+// everything must not be able to make the server materialise an unbounded
+// result set.
+const MaxListLimit = 500
 
 // Handler serves the note REST endpoints.
 type Handler struct {
@@ -35,6 +40,7 @@ func (h *Handler) Register(mux *http.ServeMux, requireAuth Middleware) {
 	mux.Handle("GET /api/notes", requireAuth(http.HandlerFunc(h.List)))
 	mux.Handle("POST /api/notes", requireAuth(http.HandlerFunc(h.Create)))
 	mux.Handle("GET /api/notes/{id}", requireAuth(http.HandlerFunc(h.Get)))
+	mux.Handle("GET /api/notes/{id}/preview", requireAuth(http.HandlerFunc(h.Preview)))
 	mux.Handle("PUT /api/notes/{id}", requireAuth(http.HandlerFunc(h.Update)))
 	mux.Handle("DELETE /api/notes/{id}", requireAuth(http.HandlerFunc(h.Delete)))
 }
@@ -137,7 +143,11 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	h.writeNote(w, http.StatusCreated, u.ID, n, r)
 }
 
-// List handles GET /api/notes, optionally filtered by ?deck_id=.
+// List handles GET /api/notes, optionally filtered by ?deck_id= and windowed
+// by ?limit=/?offset=.
+//
+// It answers with a page envelope rather than a bare array: a pager cannot be
+// drawn, nor "50 of 380" written, without knowing the total.
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	u := auth.UserFromContext(r.Context())
 
@@ -148,8 +158,8 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if raw := r.URL.Query().Get("limit"); raw != "" {
-		if n, err := strconv.Atoi(raw); err == nil && n > 0 && n <= DefaultListLimit {
-			f.Limit = n
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			f.Limit = min(n, MaxListLimit)
 		}
 	}
 	if raw := r.URL.Query().Get("offset"); raw != "" {
@@ -163,10 +173,68 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		writeNoteError(w, err)
 		return
 	}
+	total, err := h.repo.Count(r.Context(), u.ID, f)
+	if err != nil {
+		writeNoteError(w, err)
+		return
+	}
 
-	out := make([]map[string]any, 0, len(list))
+	items := make([]map[string]any, 0, len(list))
 	for _, n := range list {
-		out = append(out, publicNote(n, nil))
+		items = append(items, publicNote(n, nil))
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"items":  items,
+		"total":  total,
+		"limit":  f.Limit,
+		"offset": f.Offset,
+	})
+}
+
+// Preview handles GET /api/notes/{id}/preview, rendering every card the note
+// currently produces.
+//
+// It exists so an author can check a card reads correctly without studying
+// it, and it renders through the same generator review uses, so a preview
+// cannot drift from what will actually be asked. Images are replaced by a
+// description of their alt text — which doubles as a way to spot images
+// nobody has described.
+func (h *Handler) Preview(w http.ResponseWriter, r *http.Request) {
+	u := auth.UserFromContext(r.Context())
+	id, ok := httpx.PathID(r, "id")
+	if !ok {
+		httpx.WriteError(w, http.StatusNotFound, "note not found")
+		return
+	}
+
+	n, err := h.repo.Get(r.Context(), u.ID, id)
+	if err != nil {
+		writeNoteError(w, err)
+		return
+	}
+	gen, err := GeneratorFor(n.Type)
+	if err != nil {
+		writeNoteError(w, err)
+		return
+	}
+	specs, err := gen.Generate(n.Fields, n.Config)
+	if err != nil {
+		writeNoteError(w, err)
+		return
+	}
+
+	out := make([]map[string]any, 0, len(specs))
+	for _, spec := range specs {
+		rendered, err := gen.Render(n.Fields, n.Config, spec.Template)
+		if err != nil {
+			writeNoteError(w, err)
+			return
+		}
+		out = append(out, map[string]any{
+			"template": spec.Template,
+			"question": PreviewMarkdown(rendered.Question),
+			"answer":   PreviewMarkdown(rendered.Answer),
+		})
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
@@ -271,6 +339,9 @@ func publicNote(n *Note, list []*cards.Card) map[string]any {
 		"fields":     f,
 		"created_at": n.CreatedAt,
 		"updated_at": n.UpdatedAt,
+		// Null rather than a zero time when never studied, so the UI can say
+		// "never" instead of printing year 1.
+		"last_studied": n.LastStudied,
 	}
 
 	if list != nil {

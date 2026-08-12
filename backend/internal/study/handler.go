@@ -33,6 +33,7 @@ type Middleware func(http.Handler) http.Handler
 
 // Register mounts the study routes.
 func (h *Handler) Register(mux *http.ServeMux, requireAuth Middleware) {
+	mux.Handle("GET /api/study/next", requireAuth(http.HandlerFunc(h.NextAnywhere)))
 	mux.Handle("GET /api/decks/{id}/study/next", requireAuth(http.HandlerFunc(h.Next)))
 	mux.Handle("GET /api/decks/{id}/study/counts", requireAuth(http.HandlerFunc(h.Counts)))
 	mux.Handle("POST /api/cards/{id}/answer", requireAuth(http.HandlerFunc(h.Answer)))
@@ -59,7 +60,29 @@ func (h *Handler) Next(w http.ResponseWriter, r *http.Request) {
 		writeStudyError(w, err)
 		return
 	}
+	writeQuestion(w, q)
+}
 
+// NextAnywhere handles GET /api/study/next: the next due card without the
+// caller naming a deck, for the landing screen straight after signing in.
+// Like Next, an empty queue is 204.
+func (h *Handler) NextAnywhere(w http.ResponseWriter, r *http.Request) {
+	u := auth.UserFromContext(r.Context())
+
+	q, err := h.svc.NextAnywhere(r.Context(), u.ID, h.now())
+	if errors.Is(err, ErrQueueEmpty) {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if err != nil {
+		writeStudyError(w, err)
+		return
+	}
+	writeQuestion(w, q)
+}
+
+// writeQuestion renders a Question as the study API's card shape.
+func writeQuestion(w http.ResponseWriter, q *Question) {
 	previews := make(map[string]any, len(q.Previews))
 	for rating, p := range q.Previews {
 		previews[rating.String()] = map[string]any{
@@ -70,10 +93,11 @@ func (h *Handler) Next(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"card_id":  q.CardID,
-		"note_id":  q.NoteID,
-		"deck_id":  q.DeckID,
-		"template": q.Template,
+		"card_id":   q.CardID,
+		"note_id":   q.NoteID,
+		"deck_id":   q.DeckID,
+		"deck_name": q.DeckName,
+		"template":  q.Template,
 		"question": q.Question,
 		"answer":   q.Answer,
 		"state":    q.State.String(),

@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/danpicton/crapcard/internal/auth"
 	"github.com/danpicton/crapcard/internal/cards"
 	"github.com/danpicton/crapcard/internal/db"
 	"github.com/danpicton/crapcard/internal/decks"
 	"github.com/danpicton/crapcard/internal/notes"
+	"github.com/danpicton/crapcard/internal/srs"
 )
 
 type repoEnv struct {
@@ -346,5 +348,165 @@ func TestCountForDeck(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("count = %d, want 1", n)
+	}
+}
+
+func TestNoteReportsWhenItWasLastStudied(t *testing.T) {
+	e := newRepoEnv(t)
+	ctx := context.Background()
+
+	n, err := e.repo.Create(ctx, e.user, basicInput(e.deck, "ciao", "hello", false))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// Never studied: no timestamp rather than a zero time, so the UI can say
+	// "never" instead of printing year 1.
+	if n.LastStudied != nil {
+		t.Fatalf("a brand new note reports LastStudied = %v", n.LastStudied)
+	}
+
+	list, _ := e.cards.ListForNote(ctx, e.user, n.ID)
+	sched := srs.NewScheduler(srs.DefaultParams())
+	reviewedAt := time.Now().UTC().Truncate(time.Second)
+	res := sched.Review(list[0].State, reviewedAt, srs.RatingGood)
+	if err := e.cards.ApplyReview(ctx, e.user, list[0].ID, res.Card, res.Log); err != nil {
+		t.Fatalf("ApplyReview: %v", err)
+	}
+
+	got, err := e.repo.Get(ctx, e.user, n.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.LastStudied == nil {
+		t.Fatalf("LastStudied is nil after a review")
+	}
+	if got.LastStudied.Sub(reviewedAt).Abs() > 2*time.Second {
+		t.Fatalf("LastStudied = %v, want about %v", got.LastStudied, reviewedAt)
+	}
+}
+
+func TestLastStudiedIsTheMostRecentOfANotesCards(t *testing.T) {
+	// A bidirectional note has two cards; the note was last studied whenever
+	// either of them was.
+	e := newRepoEnv(t)
+	ctx := context.Background()
+
+	n, err := e.repo.Create(ctx, e.user, basicInput(e.deck, "ciao", "hello", true))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	list, _ := e.cards.ListForNote(ctx, e.user, n.ID)
+	sched := srs.NewScheduler(srs.DefaultParams())
+
+	older := time.Now().UTC().Add(-48 * time.Hour).Truncate(time.Second)
+	newer := time.Now().UTC().Truncate(time.Second)
+
+	first := sched.Review(list[0].State, older, srs.RatingGood)
+	if err := e.cards.ApplyReview(ctx, e.user, list[0].ID, first.Card, first.Log); err != nil {
+		t.Fatalf("ApplyReview: %v", err)
+	}
+	second := sched.Review(list[1].State, newer, srs.RatingGood)
+	if err := e.cards.ApplyReview(ctx, e.user, list[1].ID, second.Card, second.Log); err != nil {
+		t.Fatalf("ApplyReview: %v", err)
+	}
+
+	got, _ := e.repo.Get(ctx, e.user, n.ID)
+	if got.LastStudied == nil || got.LastStudied.Sub(newer).Abs() > 2*time.Second {
+		t.Fatalf("LastStudied = %v, want the more recent review at %v", got.LastStudied, newer)
+	}
+}
+
+func TestListCarriesLastStudied(t *testing.T) {
+	e := newRepoEnv(t)
+	ctx := context.Background()
+
+	n, err := e.repo.Create(ctx, e.user, basicInput(e.deck, "ciao", "hello", false))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	list, _ := e.cards.ListForNote(ctx, e.user, n.ID)
+	sched := srs.NewScheduler(srs.DefaultParams())
+	res := sched.Review(list[0].State, time.Now(), srs.RatingGood)
+	if err := e.cards.ApplyReview(ctx, e.user, list[0].ID, res.Card, res.Log); err != nil {
+		t.Fatalf("ApplyReview: %v", err)
+	}
+
+	notesList, err := e.repo.List(ctx, e.user, notes.ListFilter{})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(notesList) != 1 || notesList[0].LastStudied == nil {
+		t.Fatalf("list did not carry LastStudied: %+v", notesList[0])
+	}
+}
+
+func TestCountForPagination(t *testing.T) {
+	e := newRepoEnv(t)
+	ctx := context.Background()
+
+	second, err := decks.NewRepository(e.db).Create(ctx, e.user, "Anatomy", "")
+	if err != nil {
+		t.Fatalf("create deck: %v", err)
+	}
+	for range 3 {
+		if _, err := e.repo.Create(ctx, e.user, basicInput(e.deck, "ciao", "hello", false)); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+	}
+	if _, err := e.repo.Create(ctx, e.user, basicInput(second.ID, "femur", "thigh", false)); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	all, err := e.repo.Count(ctx, e.user, notes.ListFilter{})
+	if err != nil {
+		t.Fatalf("Count: %v", err)
+	}
+	if all != 4 {
+		t.Fatalf("Count = %d, want 4", all)
+	}
+
+	// The count must ignore limit/offset, or the last page would report
+	// itself as the whole collection.
+	paged, _ := e.repo.Count(ctx, e.user, notes.ListFilter{DeckID: e.deck, Limit: 2, Offset: 2})
+	if paged != 3 {
+		t.Fatalf("Count with a deck filter = %d, want 3", paged)
+	}
+
+	if other, _ := e.repo.Count(ctx, e.other, notes.ListFilter{}); other != 0 {
+		t.Fatalf("Count for another user = %d, want 0", other)
+	}
+}
+
+func TestListPaginates(t *testing.T) {
+	e := newRepoEnv(t)
+	ctx := context.Background()
+
+	for i := range 5 {
+		if _, err := e.repo.Create(ctx, e.user,
+			basicInput(e.deck, "front "+itoa(int64(i)), "back", false)); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+	}
+
+	first, err := e.repo.List(ctx, e.user, notes.ListFilter{Limit: 2})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(first) != 2 {
+		t.Fatalf("first page has %d notes, want 2", len(first))
+	}
+
+	second, _ := e.repo.List(ctx, e.user, notes.ListFilter{Limit: 2, Offset: 2})
+	if len(second) != 2 {
+		t.Fatalf("second page has %d notes, want 2", len(second))
+	}
+	if first[0].ID == second[0].ID {
+		t.Fatalf("offset did not advance the page")
+	}
+
+	last, _ := e.repo.List(ctx, e.user, notes.ListFilter{Limit: 2, Offset: 4})
+	if len(last) != 1 {
+		t.Fatalf("last page has %d notes, want 1", len(last))
 	}
 }

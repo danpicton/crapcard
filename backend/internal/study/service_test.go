@@ -52,7 +52,7 @@ func newEnv(t *testing.T) *env {
 	cardRepo := cards.NewRepository(database)
 	return &env{
 		db:    database,
-		svc:   study.NewService(noteRepo, cardRepo, srs.DefaultParams()),
+		svc:   study.NewService(noteRepo, cardRepo, decks.NewRepository(database), srs.DefaultParams()),
 		notes: noteRepo,
 		cards: cardRepo,
 		user:  u.ID,
@@ -286,3 +286,73 @@ func TestFieldMarkdownReachesTheClientUntouched(t *testing.T) {
 // timeNow is a seam for the handler tests, which drive the service directly
 // to set a card up before exercising an endpoint.
 func timeNow() time.Time { return time.Now() }
+
+func TestNextAnywhereResumesTheMostRecentlyStudiedDeck(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	// A second deck, studied more recently than the seeded one.
+	other, err := decks.NewRepository(e.db).Create(ctx, e.user, "Anatomy", "")
+	if err != nil {
+		t.Fatalf("create deck: %v", err)
+	}
+	e.addNote(t, "ciao", "hello", false)
+	e.addNote(t, "grazie", "thanks", false)
+	for range 2 {
+		if _, err := e.notes.Create(ctx, e.user, notes.CreateInput{
+			DeckID: other.ID, Type: notes.TypeBasic,
+			Fields: []notes.Field{{Name: "front", Value: "femur"}, {Name: "back", Value: "thigh"}},
+		}); err != nil {
+			t.Fatalf("create note: %v", err)
+		}
+	}
+
+	// Study one card from each, the Anatomy one last.
+	q, err := e.svc.Next(ctx, e.user, e.deck, now)
+	if err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	if _, err := e.svc.Answer(ctx, e.user, q.CardID, srs.RatingGood, now.Add(-time.Hour)); err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	q, err = e.svc.Next(ctx, e.user, other.ID, now)
+	if err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	if _, err := e.svc.Answer(ctx, e.user, q.CardID, srs.RatingGood, now); err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+
+	got, err := e.svc.NextAnywhere(ctx, e.user, now)
+	if err != nil {
+		t.Fatalf("NextAnywhere: %v", err)
+	}
+	if got.DeckID != other.ID {
+		t.Fatalf("resumed deck %d, want the most recently studied %d", got.DeckID, other.ID)
+	}
+	if got.DeckName != "Anatomy" {
+		t.Fatalf("deck name = %q, want Anatomy — the UI has to say where you are", got.DeckName)
+	}
+}
+
+func TestNextAnywhereWorksForAUserWhoHasStudiedNothing(t *testing.T) {
+	e := newEnv(t)
+	e.addNote(t, "ciao", "hello", false)
+
+	got, err := e.svc.NextAnywhere(context.Background(), e.user, time.Now())
+	if err != nil {
+		t.Fatalf("NextAnywhere: %v", err)
+	}
+	if got.Question != "ciao" {
+		t.Fatalf("question = %q", got.Question)
+	}
+}
+
+func TestNextAnywhereIsQueueEmptyWhenNothingIsDue(t *testing.T) {
+	e := newEnv(t)
+
+	if _, err := e.svc.NextAnywhere(context.Background(), e.user, time.Now()); !errors.Is(err, study.ErrQueueEmpty) {
+		t.Fatalf("NextAnywhere with no cards = %v, want ErrQueueEmpty", err)
+	}
+}

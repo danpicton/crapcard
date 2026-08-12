@@ -237,6 +237,46 @@ func (r *Repository) Due(ctx context.Context, userID, deckID int64, now time.Tim
 	return list, rows.Err()
 }
 
+// NextDeckToStudy picks which deck to open a study session in when the user
+// has not chosen one — landing them straight on a card after signing in.
+//
+// Only decks with something actually due are considered, and among those the
+// one studied most recently wins: resuming where you left off is the least
+// surprising choice. A deck nobody has touched sorts last (its MAX is NULL,
+// which SQLite orders last under DESC) so an in-progress deck is preferred
+// over a fresh one.
+//
+// Returns ErrNotFound when nothing is due anywhere.
+func (r *Repository) NextDeckToStudy(ctx context.Context, userID int64, now time.Time) (int64, error) {
+	// Recency is measured across the deck's whole history, not just the cards
+	// still due: answering a card pushes it out of the due set, so ranking on
+	// the due cards alone would make the deck you just studied look untouched.
+	var deckID int64
+	err := r.db.QueryRowContext(ctx,
+		`SELECT ranked.deck_id
+		 FROM (
+		   SELECT deck_id, MAX(last_review) AS recency
+		   FROM cards
+		   WHERE user_id=?
+		   GROUP BY deck_id
+		 ) AS ranked
+		 WHERE EXISTS (
+		   SELECT 1 FROM cards c
+		   WHERE c.user_id=? AND c.deck_id=ranked.deck_id AND c.suspended=0 AND c.due<=?
+		 )
+		 ORDER BY ranked.recency DESC, ranked.deck_id
+		 LIMIT 1`,
+		userID, userID, now.UTC(),
+	).Scan(&deckID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	if err != nil {
+		return 0, fmt.Errorf("next deck to study: %w", err)
+	}
+	return deckID, nil
+}
+
 // Counts summarises the deck's queue at `now`, splitting waiting cards by
 // whether they have never been seen, are mid-learning, or have come back
 // round for review.

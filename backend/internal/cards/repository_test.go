@@ -334,3 +334,129 @@ func TestCardsCascadeWhenTheirNoteGoes(t *testing.T) {
 		t.Fatalf("%d cards survived their note", len(list))
 	}
 }
+
+func TestNextDeckToStudyPrefersTheMostRecentlyStudied(t *testing.T) {
+	// Landing straight on a card means picking a deck for the user; the one
+	// they were last working through is the least surprising choice.
+	e := newEnv(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	older, err := decks.NewRepository(e.db).Create(ctx, e.user, "Older", "")
+	if err != nil {
+		t.Fatalf("create deck: %v", err)
+	}
+	recent, err := decks.NewRepository(e.db).Create(ctx, e.user, "Recent", "")
+	if err != nil {
+		t.Fatalf("create deck: %v", err)
+	}
+
+	noteRepo := notes.NewRepository(e.db)
+	sched := srs.NewScheduler(srs.DefaultParams())
+	// Each deck gets two notes so answering one leaves something still due.
+	for _, deckID := range []int64{older.ID, recent.ID} {
+		for range 2 {
+			if _, err := noteRepo.Create(ctx, e.user, notes.CreateInput{
+				DeckID: deckID, Type: notes.TypeBasic,
+				Fields: []notes.Field{{Name: "front", Value: "a"}, {Name: "back", Value: "b"}},
+			}); err != nil {
+				t.Fatalf("create note: %v", err)
+			}
+		}
+	}
+
+	// Study one card in each deck, the "Recent" one more recently.
+	study := func(deckID int64, at time.Time) {
+		t.Helper()
+		due, err := e.repo.Due(ctx, e.user, deckID, now, 1)
+		if err != nil || len(due) == 0 {
+			t.Fatalf("no due card in deck %d: %v", deckID, err)
+		}
+		res := sched.Review(due[0].State, at, srs.RatingGood)
+		if err := e.repo.ApplyReview(ctx, e.user, due[0].ID, res.Card, res.Log); err != nil {
+			t.Fatalf("ApplyReview: %v", err)
+		}
+	}
+	study(older.ID, now.Add(-72*time.Hour))
+	study(recent.ID, now.Add(-1*time.Hour))
+
+	got, err := e.repo.NextDeckToStudy(ctx, e.user, now)
+	if err != nil {
+		t.Fatalf("NextDeckToStudy: %v", err)
+	}
+	if got != recent.ID {
+		t.Fatalf("chose deck %d, want the most recently studied %d", got, recent.ID)
+	}
+}
+
+func TestNextDeckToStudyFallsBackToAnUnstudiedDeck(t *testing.T) {
+	// A brand new user has studied nothing, but still has cards waiting.
+	e := newEnv(t)
+
+	got, err := e.repo.NextDeckToStudy(context.Background(), e.user, time.Now())
+	if err != nil {
+		t.Fatalf("NextDeckToStudy: %v", err)
+	}
+	if got != e.deck {
+		t.Fatalf("chose deck %d, want %d", got, e.deck)
+	}
+}
+
+func TestNextDeckToStudySkipsDecksWithNothingDue(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	// Answer the only card in the seeded deck, so it has nothing left.
+	due, _ := e.repo.Due(ctx, e.user, e.deck, now, 1)
+	sched := srs.NewScheduler(srs.DefaultParams())
+	res := sched.Review(due[0].State, now, srs.RatingEasy)
+	if err := e.repo.ApplyReview(ctx, e.user, due[0].ID, res.Card, res.Log); err != nil {
+		t.Fatalf("ApplyReview: %v", err)
+	}
+
+	// A second deck still has one.
+	other, err := decks.NewRepository(e.db).Create(ctx, e.user, "Anatomy", "")
+	if err != nil {
+		t.Fatalf("create deck: %v", err)
+	}
+	if _, err := notes.NewRepository(e.db).Create(ctx, e.user, notes.CreateInput{
+		DeckID: other.ID, Type: notes.TypeBasic,
+		Fields: []notes.Field{{Name: "front", Value: "femur"}, {Name: "back", Value: "thigh"}},
+	}); err != nil {
+		t.Fatalf("create note: %v", err)
+	}
+
+	got, err := e.repo.NextDeckToStudy(ctx, e.user, now)
+	if err != nil {
+		t.Fatalf("NextDeckToStudy: %v", err)
+	}
+	if got != other.ID {
+		t.Fatalf("chose deck %d, want the deck that still has cards due (%d)", got, other.ID)
+	}
+}
+
+func TestNextDeckToStudyReturnsErrNotFoundWhenNothingIsDueAnywhere(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	due, _ := e.repo.Due(ctx, e.user, e.deck, now, 1)
+	sched := srs.NewScheduler(srs.DefaultParams())
+	res := sched.Review(due[0].State, now, srs.RatingEasy)
+	if err := e.repo.ApplyReview(ctx, e.user, due[0].ID, res.Card, res.Log); err != nil {
+		t.Fatalf("ApplyReview: %v", err)
+	}
+
+	if _, err := e.repo.NextDeckToStudy(ctx, e.user, now); !errors.Is(err, cards.ErrNotFound) {
+		t.Fatalf("NextDeckToStudy with nothing due = %v, want ErrNotFound", err)
+	}
+}
+
+func TestNextDeckToStudyIsScopedToTheOwner(t *testing.T) {
+	e := newEnv(t)
+
+	if _, err := e.repo.NextDeckToStudy(context.Background(), e.other, time.Now()); !errors.Is(err, cards.ErrNotFound) {
+		t.Fatalf("another user was offered a deck: %v", err)
+	}
+}

@@ -166,3 +166,39 @@ func TestDeckCountsEndpoint(t *testing.T) {
 		t.Fatalf("counts = %s, want 2 new from a reversed note", rec.Body.String())
 	}
 }
+
+func TestNextAnywhereEndpointReturnsACardAndItsDeck(t *testing.T) {
+	e := newEnv(t)
+	e.addNote(t, "ciao", "hello", false)
+
+	rec := e.serve(t, e.user, http.MethodGet, "/api/study/next", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	var got struct {
+		CardID   int64  `json:"card_id"`
+		DeckID   int64  `json:"deck_id"`
+		DeckName string `json:"deck_name"`
+		Question string `json:"question"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.CardID == 0 || got.Question != "ciao" {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+	// The landing screen has to say which deck it dropped you into.
+	if got.DeckID != e.deck || got.DeckName != "Italian" {
+		t.Fatalf("deck = %d/%q, want %d/Italian", got.DeckID, got.DeckName, e.deck)
+	}
+}
+
+func TestNextAnywhereEndpointIs204WhenNothingIsDue(t *testing.T) {
+	e := newEnv(t)
+
+	rec := e.serve(t, e.user, http.MethodGet, "/api/study/next", "")
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", rec.Code)
+	}
+}

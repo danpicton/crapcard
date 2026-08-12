@@ -8,9 +8,11 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/danpicton/crapcard/internal/auth"
 	"github.com/danpicton/crapcard/internal/notes"
+	"github.com/danpicton/crapcard/internal/srs"
 )
 
 func (e *repoEnv) serve(t *testing.T, userID int64, method, target, body string) *httptest.ResponseRecorder {
@@ -111,21 +113,30 @@ func TestListNotesEndpointFiltersByDeck(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	var got []map[string]any
+	var got struct {
+		Items []map[string]any `json:"items"`
+	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(got) != 1 {
-		t.Fatalf("got %d notes, want 1", len(got))
+	if len(got.Items) != 1 {
+		t.Fatalf("got %d notes, want 1", len(got.Items))
 	}
 }
 
-func TestListNotesReturnsEmptyArrayNotNull(t *testing.T) {
+func TestListNotesTotalIsZeroOnAnEmptyDeck(t *testing.T) {
 	e := newRepoEnv(t)
 
 	rec := e.serve(t, e.user, http.MethodGet, "/api/notes", "")
-	if body := strings.TrimSpace(rec.Body.String()); body != "[]" {
-		t.Fatalf("body = %s, want []", body)
+	var got struct {
+		Items []map[string]any `json:"items"`
+		Total int              `json:"total"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got.Items) != 0 || got.Total != 0 {
+		t.Fatalf("body = %s", rec.Body.String())
 	}
 }
 
@@ -237,5 +248,198 @@ func TestNoteTypesEndpointAdvertisesWhatIsImplemented(t *testing.T) {
 	}
 	if len(got[0].Fields) != 2 || got[0].Fields[0] != "front" || got[0].Fields[1] != "back" {
 		t.Fatalf("basic fields = %v", got[0].Fields)
+	}
+}
+
+func TestListNotesReturnsAPageWithATotal(t *testing.T) {
+	// Pagination needs the total, not just the page: without it the UI cannot
+	// draw a pager or say "50 of 380".
+	e := newRepoEnv(t)
+	ctx := context.Background()
+	for range 5 {
+		if _, err := e.repo.Create(ctx, e.user, basicInput(e.deck, "ciao", "hello", false)); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+	}
+
+	rec := e.serve(t, e.user, http.MethodGet, "/api/notes?limit=2&offset=0", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+
+	var got struct {
+		Items  []map[string]any `json:"items"`
+		Total  int              `json:"total"`
+		Limit  int              `json:"limit"`
+		Offset int              `json:"offset"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got.Items) != 2 {
+		t.Fatalf("page has %d items, want 2", len(got.Items))
+	}
+	if got.Total != 5 {
+		t.Fatalf("total = %d, want 5", got.Total)
+	}
+	if got.Limit != 2 || got.Offset != 0 {
+		t.Fatalf("limit/offset echoed as %d/%d", got.Limit, got.Offset)
+	}
+}
+
+func TestListNotesSecondPage(t *testing.T) {
+	e := newRepoEnv(t)
+	ctx := context.Background()
+	for range 5 {
+		if _, err := e.repo.Create(ctx, e.user, basicInput(e.deck, "ciao", "hello", false)); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+	}
+
+	rec := e.serve(t, e.user, http.MethodGet, "/api/notes?limit=2&offset=4", "")
+	var got struct {
+		Items []map[string]any `json:"items"`
+		Total int              `json:"total"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got.Items) != 1 || got.Total != 5 {
+		t.Fatalf("last page = %d items of %d", len(got.Items), got.Total)
+	}
+}
+
+func TestListNotesItemsIsAnArrayEvenWhenEmpty(t *testing.T) {
+	e := newRepoEnv(t)
+
+	rec := e.serve(t, e.user, http.MethodGet, "/api/notes", "")
+	if !strings.Contains(rec.Body.String(), `"items":[]`) {
+		t.Fatalf("body = %s, want an empty array for items", rec.Body.String())
+	}
+}
+
+func TestListNotesCapsAnAbsurdLimit(t *testing.T) {
+	// A client asking for everything must not be able to make the server
+	// materialise an unbounded result set.
+	e := newRepoEnv(t)
+
+	rec := e.serve(t, e.user, http.MethodGet, "/api/notes?limit=100000", "")
+	var got struct {
+		Limit int `json:"limit"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Limit > notes.MaxListLimit {
+		t.Fatalf("limit = %d, want it capped at %d", got.Limit, notes.MaxListLimit)
+	}
+}
+
+func TestNoteListCarriesLastStudied(t *testing.T) {
+	e := newRepoEnv(t)
+	ctx := context.Background()
+	n, err := e.repo.Create(ctx, e.user, basicInput(e.deck, "ciao", "hello", false))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	rec := e.serve(t, e.user, http.MethodGet, "/api/notes", "")
+	var got struct {
+		Items []struct {
+			LastStudied *string `json:"last_studied"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Items[0].LastStudied != nil {
+		t.Fatalf("a never-studied note reported last_studied = %v", *got.Items[0].LastStudied)
+	}
+
+	list, _ := e.cards.ListForNote(ctx, e.user, n.ID)
+	sched := srs.NewScheduler(srs.DefaultParams())
+	res := sched.Review(list[0].State, time.Now(), srs.RatingGood)
+	if err := e.cards.ApplyReview(ctx, e.user, list[0].ID, res.Card, res.Log); err != nil {
+		t.Fatalf("ApplyReview: %v", err)
+	}
+
+	rec = e.serve(t, e.user, http.MethodGet, "/api/notes", "")
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Items[0].LastStudied == nil {
+		t.Fatalf("last_studied still null after a review: %s", rec.Body.String())
+	}
+}
+
+func TestPreviewEndpointRendersEveryCardTheNoteProduces(t *testing.T) {
+	e := newRepoEnv(t)
+	n, err := e.repo.Create(context.Background(), e.user, basicInput(e.deck, "ciao", "hello", true))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	rec := e.serve(t, e.user, http.MethodGet, "/api/notes/"+itoa(n.ID)+"/preview", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	var got []struct {
+		Template string `json:"template"`
+		Question string `json:"question"`
+		Answer   string `json:"answer"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d previews for a bidirectional note, want 2", len(got))
+	}
+	if got[0].Question != "ciao" || got[0].Answer != "hello" {
+		t.Fatalf("forward preview = %+v", got[0])
+	}
+	if got[1].Question != "hello" || got[1].Answer != "ciao" {
+		t.Fatalf("reverse preview = %+v", got[1])
+	}
+}
+
+func TestPreviewDescribesImagesByTheirAltText(t *testing.T) {
+	e := newRepoEnv(t)
+	front := "What is this? ![the femur](/api/images/abc?w=300)"
+	n, err := e.repo.Create(context.Background(), e.user,
+		basicInput(e.deck, front, "A thigh bone ![](/api/images/def)", false))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	rec := e.serve(t, e.user, http.MethodGet, "/api/notes/"+itoa(n.ID)+"/preview", "")
+	var got []struct {
+		Question string `json:"question"`
+		Answer   string `json:"answer"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got[0].Question != `What is this? *image:* "the femur"` {
+		t.Fatalf("question = %q", got[0].Question)
+	}
+	if got[0].Answer != `A thigh bone *image:* no alt text` {
+		t.Fatalf("answer = %q", got[0].Answer)
+	}
+}
+
+func TestPreviewOfAnotherUsersNoteIs404(t *testing.T) {
+	e := newRepoEnv(t)
+	n, err := e.repo.Create(context.Background(), e.other, notes.CreateInput{
+		DeckID: e.otherDeck, Type: notes.TypeBasic,
+		Fields: []notes.Field{{Name: "front", Value: "x"}, {Name: "back", Value: "y"}},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	rec := e.serve(t, e.user, http.MethodGet, "/api/notes/"+itoa(n.ID)+"/preview", "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
 	}
 }

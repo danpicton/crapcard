@@ -105,6 +105,9 @@ func TestAPIRequiresAuthentication(t *testing.T) {
 		{http.MethodGet, "/api/decks/1/study/counts"},
 		{http.MethodPost, "/api/cards/1/answer"},
 		{http.MethodPost, "/api/images"},
+		{http.MethodGet, "/api/study/next"},
+		{http.MethodGet, "/api/notes/1/preview"},
+		{http.MethodGet, "/api/config"},
 		{http.MethodGet, "/api/images/abc"},
 		{http.MethodGet, "/api/auth/me"},
 	}
@@ -274,5 +277,75 @@ func TestSecurityHeadersArePresent(t *testing.T) {
 		if got := rec.Header().Get(header); got != want {
 			t.Fatalf("%s = %q, want %q", header, got, want)
 		}
+	}
+}
+
+func TestConfigEndpointReportsThePageSize(t *testing.T) {
+	c := newClient(t)
+	c.setupAndLogin()
+
+	rec := c.do(http.MethodGet, "/api/config", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var got struct {
+		PageSize int `json:"page_size"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.PageSize != defaultPageSize {
+		t.Fatalf("page_size = %d, want the default %d", got.PageSize, defaultPageSize)
+	}
+}
+
+func TestConfiguredPageSizeReachesTheClient(t *testing.T) {
+	database, err := db.Open(db.Config{SQLitePath: ":memory:"})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+
+	handler, err := newServer(database, Config{PageSize: 25})
+	if err != nil {
+		t.Fatalf("newServer: %v", err)
+	}
+	c := &client{t: t, handler: handler}
+	c.setupAndLogin()
+
+	rec := c.do(http.MethodGet, "/api/config", "")
+	var got struct {
+		PageSize int `json:"page_size"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.PageSize != 25 {
+		t.Fatalf("page_size = %d, want 25", got.PageSize)
+	}
+}
+
+func TestLandingCardEndpointIsReachable(t *testing.T) {
+	// Signing in should put a card in front of you; this is the route the
+	// landing screen calls.
+	c := newClient(t)
+	c.setupAndLogin()
+
+	rec := c.do(http.MethodPost, "/api/decks", `{"name":"Italian"}`)
+	var deck struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &deck); err != nil {
+		t.Fatalf("decode deck: %v", err)
+	}
+	c.do(http.MethodPost, "/api/notes", `{"deck_id":`+itoa(deck.ID)+
+		`,"type":"basic","fields":{"front":"ciao","back":"hello"}}`)
+
+	rec = c.do(http.MethodGet, "/api/study/next", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"deck_name":"Italian"`) {
+		t.Fatalf("body = %s, want the deck name", rec.Body.String())
 	}
 }

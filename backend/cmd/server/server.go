@@ -14,8 +14,16 @@ import (
 	"github.com/danpicton/crapcard/internal/study"
 )
 
+// defaultPageSize is how many cards a deck listing shows per page when the
+// deployment does not set one.
+const defaultPageSize = 50
+
 // Config holds runtime settings that are not the database itself.
 type Config struct {
+	// PageSize is the deployment-wide default page size for card listings.
+	// A user's own preference, and the per-deck selector, override it in the
+	// client; this is only the starting point. Zero means defaultPageSize.
+	PageSize int
 	// TrustProxy honours X-Forwarded-* headers. Only enable it when a
 	// reverse proxy you control strips inbound copies of them.
 	TrustProxy bool
@@ -31,6 +39,9 @@ type Config struct {
 func newServer(database *db.DB, cfg Config) (http.Handler, error) {
 	if cfg.Images.MaxImageSize == 0 {
 		cfg.Images = images.DefaultConfig()
+	}
+	if cfg.PageSize <= 0 {
+		cfg.PageSize = defaultPageSize
 	}
 
 	authSvc := auth.NewService(auth.NewUserRepo(database), auth.NewSessionRepo(database))
@@ -54,9 +65,18 @@ func newServer(database *db.DB, cfg Config) (http.Handler, error) {
 	// Authenticated.
 	mux.Handle("GET /api/auth/me", requireAuth(http.HandlerFunc(authHandler.Me)))
 
+	// Deployment settings the client needs to know about.
+	mux.Handle("GET /api/config", requireAuth(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{
+				"page_size":     cfg.PageSize,
+				"max_page_size": notes.MaxListLimit,
+			})
+		})))
+
 	decks.NewHandler(decks.NewRepository(database)).Register(mux, requireAuth)
 	notes.NewHandler(noteRepo, cardRepo).Register(mux, requireAuth)
-	study.NewHandler(study.NewService(noteRepo, cardRepo, srs.DefaultParams())).Register(mux, requireAuth)
+	study.NewHandler(study.NewService(noteRepo, cardRepo, decks.NewRepository(database), srs.DefaultParams())).Register(mux, requireAuth)
 	images.NewHandlerWith(database, cfg.Images).Register(mux, requireAuth)
 
 	// Anything under /api that matched no route is a JSON 404. Without this
