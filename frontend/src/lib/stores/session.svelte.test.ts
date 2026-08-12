@@ -39,12 +39,14 @@ describe('study session', () => {
 	let deps: {
 		nextCard: ReturnType<typeof vi.fn>;
 		answerCard: ReturnType<typeof vi.fn>;
+		undoAnswer: ReturnType<typeof vi.fn>;
 	};
 
 	beforeEach(() => {
 		deps = {
 			nextCard: vi.fn().mockResolvedValue(card()),
 			answerCard: vi.fn().mockResolvedValue(answerResult()),
+			undoAnswer: vi.fn().mockResolvedValue(card()),
 		};
 	});
 
@@ -198,6 +200,74 @@ describe('study session', () => {
 		expect(s.error).toBeTruthy();
 
 		await s.answer(3);
+		expect(s.error).toBeNull();
+	});
+
+	it('studies from anywhere when no deck is named', async () => {
+		const s = createSession(null, deps);
+		await s.start();
+
+		expect(deps.nextCard).toHaveBeenCalledWith(null);
+		expect(s.card?.question).toBe('ciao');
+	});
+
+	it('refuses to undo before anything has been answered', async () => {
+		const s = createSession(1, deps);
+		await s.start();
+
+		expect(s.canUndo).toBe(false);
+		await s.undo();
+		expect(deps.undoAnswer).not.toHaveBeenCalled();
+	});
+
+	it('brings the answered card back, revealed, when undone', async () => {
+		const s = createSession(1, deps);
+		await s.start();
+		s.reveal();
+
+		deps.nextCard.mockResolvedValue(card({ card_id: 2, question: 'grazie' }));
+		await s.answer(3);
+		expect(s.card?.card_id).toBe(2);
+		expect(s.canUndo).toBe(true);
+
+		deps.undoAnswer.mockResolvedValue(card({ card_id: 1 }));
+		await s.undo();
+
+		expect(s.card?.card_id).toBe(1);
+		expect(s.revealed).toBe(true);
+		expect(s.reviewed).toBe(0);
+		expect(s.canUndo).toBe(false);
+	});
+
+	it('undoes its way back out of a finished session', async () => {
+		// Grading the last card wrong and watching the deck end is exactly
+		// when undo matters most.
+		const s = createSession(1, deps);
+		await s.start();
+		s.reveal();
+
+		deps.nextCard.mockResolvedValue(null);
+		await s.answer(4);
+		expect(s.finished).toBe(true);
+
+		deps.undoAnswer.mockResolvedValue(card({ card_id: 1 }));
+		await s.undo();
+
+		expect(s.finished).toBe(false);
+		expect(s.card?.card_id).toBe(1);
+		expect(s.revealed).toBe(true);
+	});
+
+	it('handles the server having nothing to undo', async () => {
+		const s = createSession(1, deps);
+		await s.start();
+		s.reveal();
+		await s.answer(3);
+
+		deps.undoAnswer.mockResolvedValue(null);
+		await s.undo();
+
+		expect(s.canUndo).toBe(false);
 		expect(s.error).toBeNull();
 	});
 });

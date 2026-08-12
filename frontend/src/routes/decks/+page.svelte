@@ -118,8 +118,11 @@
 				<div class="deck-actions">
 					{#if row.counts && row.counts.total > 0}
 						<a class="primary button" href="/decks/{row.deck.id}/study">Study</a>
-					{:else}
+					{:else if row.counts}
 						<span class="muted small">Nothing due</span>
+					{:else}
+						<!-- The counts call failed; claiming "nothing due" would be a lie. -->
+						<span class="muted small">Counts unavailable</span>
 					{/if}
 					<button type="button" class="danger link" onclick={() => removeDeck(row.deck)}>
 						Delete

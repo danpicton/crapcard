@@ -67,7 +67,7 @@ describe('api', () => {
 		await api.answerCard(12, 3);
 
 		const [url, init] = vi.mocked(fetch).mock.calls[0];
-		expect(url).toBe('/api/cards/12/answer');
+		expect(url).toMatch(/^\/api\/cards\/12\/answer\?tz_offset=-?\d+$/);
 		expect(init?.method).toBe('POST');
 		expect(JSON.parse(init?.body as string)).toEqual({ rating: 3 });
 	});

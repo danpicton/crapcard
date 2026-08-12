@@ -20,6 +20,12 @@
 
 	let cards = $state<CardPreview[] | null>(null);
 	let error = $state<string | null>(null);
+	let modalEl = $state<HTMLElement | null>(null);
+
+	// Focus lands in the dialog on open, so Escape and screen readers see it.
+	$effect(() => {
+		modalEl?.focus();
+	});
 
 	$effect(() => {
 		let cancelled = false;
@@ -58,6 +64,7 @@
 		tabindex="-1"
 		aria-modal="true"
 		aria-label="Card preview"
+		bind:this={modalEl}
 		onclick={(e) => e.stopPropagation()}
 	>
 		<header>

@@ -31,8 +31,15 @@ the two apps look and feel like siblings.
 - **Decks.** A note belongs to one deck; study sessions are per-deck, with a
   paginated card list.
 - **FSRS scheduling.** Each answer feeds the algorithm; the four answer buttons
-  are labelled with the interval each would produce.
-- **Keyboard review.** Space reveals, 1–4 grade.
+  are labelled with the interval each would produce. Review cards are due at
+  day granularity in *your* timezone — a card due at 14:00 shows up in the
+  09:00 session — while learning steps keep their exact intra-day timing.
+  Due learning and review cards are always served before new cards, so a
+  freshly authored batch cannot starve the reviews scheduled for today.
+- **Undo.** The most recent answer can be taken back — the card returns,
+  revealed, ready to be graded properly. Repeat to step further back.
+- **Keyboard review.** Space reveals, 1–4 grade (space again for Good, with a
+  beat of cooldown so a held key cannot grade unread cards), U undoes.
 - **Signing in lands on a card.** The next thing due, from the deck you were
   last working through.
 - **Multi-user.** Sessions, per-user scoping on every query.
@@ -201,5 +208,11 @@ All routes need a session cookie except `/healthz` and the setup/login handshake
 | `GET` | `/api/decks/{id}/study/next` | Next due card in one deck, or `204` |
 | `GET` | `/api/decks/{id}/study/counts` | Queue counts |
 | `POST` | `/api/cards/{id}/answer` | `{"rating": 1..4}` |
+| `POST` | `/api/study/undo` | Revert the latest answer; returns the card, or `204` if nothing to undo |
+
+The study endpoints accept `?tz_offset=<minutes east of UTC>` (what
+JavaScript's `-getTimezoneOffset()` reports) so review cards can be gated on
+the end of the client's calendar day. Without it, days roll over at UTC
+midnight.
 | `POST` | `/api/images` | Raw image bytes (what a paste produces) |
 | `GET` | `/api/images/{id}` | Fetch an image |

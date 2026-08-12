@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { page } from '$app/state';
 	import { api, type Deck, type Note, type QueueCounts } from '$lib/api';
 	import { prefs } from '$lib/stores/prefs.svelte';
@@ -35,7 +35,17 @@
 	let front = $state('');
 	let back = $state('');
 	let reversed = $state(false);
+	// What the note's reversed flag was when editing began, so switching it
+	// off can warn about the review history it would delete.
+	let wasReversed = $state(false);
 	let saving = $state(false);
+	let composerEl = $state<HTMLElement | null>(null);
+
+	// Deck header editing.
+	let editingDeck = $state(false);
+	let deckName = $state('');
+	let deckDescription = $state('');
+	let savingDeck = $state(false);
 
 	async function load() {
 		loading = true;
@@ -94,12 +104,21 @@
 		return `${Math.floor(days / 365)}y ago`;
 	}
 
+	/** Bring the composer into view — "Edit" far down the list opens it at
+	 * the top of the page, out of sight otherwise. */
+	async function revealComposer() {
+		await tick();
+		composerEl?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+	}
+
 	function startNew() {
 		editingId = null;
 		front = '';
 		back = '';
 		reversed = false;
+		wasReversed = false;
 		composing = true;
+		void revealComposer();
 	}
 
 	function startEdit(note: Note) {
@@ -107,7 +126,9 @@
 		front = note.fields.front ?? '';
 		back = note.fields.back ?? '';
 		reversed = note.reversed;
+		wasReversed = note.reversed;
 		composing = true;
+		void revealComposer();
 	}
 
 	function cancel() {
@@ -118,6 +139,19 @@
 	async function save() {
 		if (!front.trim() || !back.trim()) {
 			error = 'Both sides are required.';
+			return;
+		}
+		// Turning bidirectional off deletes the reverse card outright —
+		// including every review it has ever been given. That is not a
+		// wording tweak, so it does not happen silently.
+		if (
+			editingId !== null &&
+			wasReversed &&
+			!reversed &&
+			!confirm(
+				'Turning off bidirectional deletes the reverse card and all of its review history. Continue?',
+			)
+		) {
 			return;
 		}
 
@@ -143,8 +177,35 @@
 		}
 	}
 
+	function startDeckEdit() {
+		if (!deck) return;
+		deckName = deck.name;
+		deckDescription = deck.description;
+		editingDeck = true;
+	}
+
+	async function saveDeck(event: SubmitEvent) {
+		event.preventDefault();
+		const name = deckName.trim();
+		if (!name) return;
+
+		savingDeck = true;
+		error = null;
+		try {
+			deck = await api.updateDeck(deckId, name, deckDescription.trim());
+			editingDeck = false;
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'could not save the deck';
+		} finally {
+			savingDeck = false;
+		}
+	}
+
 	async function remove(note: Note) {
-		if (!confirm('Delete this card and its review history?')) return;
+		const message = note.reversed
+			? 'Delete this note — both its cards and their review history?'
+			: 'Delete this card and its review history?';
+		if (!confirm(message)) return;
 		try {
 			await api.deleteNote(note.id);
 			await load();
@@ -160,25 +221,54 @@
 {#if loading}
 	<p class="muted">Loading…</p>
 {:else if deck}
-	<div class="head">
-		<div>
-			<h1>{deck.name}</h1>
-			{#if deck.description}<p class="muted small">{deck.description}</p>{/if}
+	{#if editingDeck}
+		<form class="deck-edit" onsubmit={saveDeck}>
+			<label>
+				Name
+				<input bind:value={deckName} required />
+			</label>
+			<label>
+				Description
+				<input bind:value={deckDescription} placeholder="optional" />
+			</label>
+			<div class="composer-actions">
+				<button type="submit" class="primary" disabled={savingDeck}>
+					{savingDeck ? 'Saving…' : 'Save'}
+				</button>
+				<button type="button" class="link" onclick={() => (editingDeck = false)}>Cancel</button>
+			</div>
+		</form>
+	{:else}
+		<div class="head">
+			<div>
+				<h1>
+					{deck.name}
+					<button
+						type="button"
+						class="link rename"
+						onclick={startDeckEdit}
+						aria-label="Rename this deck"
+					>
+						Edit
+					</button>
+				</h1>
+				{#if deck.description}<p class="muted small">{deck.description}</p>{/if}
+			</div>
+			<div class="head-actions">
+				{#if counts && counts.total > 0}
+					<a class="primary button" href="/decks/{deckId}/study">Study {counts.total}</a>
+				{/if}
+				<button type="button" class="secondary" onclick={startNew}>Add card</button>
+			</div>
 		</div>
-		<div class="head-actions">
-			{#if counts && counts.total > 0}
-				<a class="primary button" href="/decks/{deckId}/study">Study {counts.total}</a>
-			{/if}
-			<button type="button" class="secondary" onclick={startNew}>Add card</button>
-		</div>
-	</div>
+	{/if}
 
 	{#if error}
 		<p class="error">{error}</p>
 	{/if}
 
 	{#if composing}
-		<section class="composer">
+		<section class="composer" bind:this={composerEl}>
 			<h2>{editingId === null ? 'New card' : 'Edit card'}</h2>
 
 			<label class="field">
@@ -358,6 +448,39 @@
 		border: 1px solid var(--border);
 		border-radius: 6px;
 		padding: 1rem;
+	}
+
+	.rename {
+		vertical-align: middle;
+		margin-left: 0.25rem;
+	}
+
+	.deck-edit {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+		background: var(--bg-alt);
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		padding: 1rem;
+		margin: 0.75rem 0 1.5rem;
+	}
+
+	.deck-edit label {
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
+		font-size: 0.8125rem;
+		color: var(--text-2);
+	}
+
+	.deck-edit input {
+		font: inherit;
+		padding: 0.5rem;
+		border: 1px solid var(--border);
+		border-radius: 4px;
+		background: var(--bg);
+		color: var(--text);
 	}
 
 	.field {

@@ -185,6 +185,13 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 	}
 
 	if (!res.ok) {
+		// An expired session makes every call 401. Bouncing to the sign-in
+		// page beats surfacing "request failed (401)" on whatever button the
+		// user happened to press. Auth endpoints are exempt: a failed login
+		// is a message to show, not a redirect loop.
+		if (res.status === 401 && !path.startsWith('/api/auth/')) {
+			window.location.assign('/login');
+		}
 		const message =
 			parsed && typeof parsed === 'object' && 'error' in parsed
 				? String((parsed as { error: unknown }).error)
@@ -193,6 +200,15 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 	}
 
 	return parsed as T;
+}
+
+/**
+ * The client's UTC offset, sent with study calls so the server can gate
+ * review cards on the end of *this* calendar day rather than an exact
+ * timestamp — a card due at 14:00 belongs in the 09:00 session.
+ */
+function tzQuery(): string {
+	return `tz_offset=${-new Date().getTimezoneOffset()}`;
 }
 
 function postJSON<T>(path: string, body: unknown, method = 'POST'): Promise<T> {
@@ -243,15 +259,22 @@ export const api = {
 
 	// ── Study ───────────────────────────────────────────────────────────────
 	/** Returns null when nothing is due (the server answers 204). */
-	nextCard: (deckId: number) => request<StudyCard | null>(`/api/decks/${deckId}/study/next`),
+	nextCard: (deckId: number) =>
+		request<StudyCard | null>(`/api/decks/${deckId}/study/next?${tzQuery()}`),
 	/**
 	 * The next due card without naming a deck — the landing screen's call.
 	 * Null when nothing is due anywhere.
 	 */
-	nextCardAnywhere: () => request<StudyCard | null>('/api/study/next'),
-	deckCounts: (deckId: number) => request<QueueCounts>(`/api/decks/${deckId}/study/counts`),
+	nextCardAnywhere: () => request<StudyCard | null>(`/api/study/next?${tzQuery()}`),
+	deckCounts: (deckId: number) =>
+		request<QueueCounts>(`/api/decks/${deckId}/study/counts?${tzQuery()}`),
 	answerCard: (cardId: number, rating: RatingValue | number) =>
-		postJSON<AnswerResult>(`/api/cards/${cardId}/answer`, { rating }),
+		postJSON<AnswerResult>(`/api/cards/${cardId}/answer?${tzQuery()}`, { rating }),
+	/**
+	 * Reverts the most recent answer and returns the card, ready to be graded
+	 * again. Null when there is nothing to undo (the server answers 204).
+	 */
+	undoAnswer: () => postJSON<StudyCard | null>(`/api/study/undo?${tzQuery()}`, {}),
 
 	// ── Images ──────────────────────────────────────────────────────────────
 	/**
