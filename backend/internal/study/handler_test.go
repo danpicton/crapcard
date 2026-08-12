@@ -90,7 +90,7 @@ func TestAnswerEndpointSchedulesTheCard(t *testing.T) {
 	e := newEnv(t)
 	e.addNote(t, "ciao", "hello", false)
 
-	q, err := e.svc.Next(context.Background(), e.user, e.deck, timeNow())
+	q, err := e.svc.Next(context.Background(), e.user, e.deck, at(timeNow()))
 	if err != nil {
 		t.Fatalf("Next: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestAnswerEndpointSchedulesTheCard(t *testing.T) {
 func TestAnswerEndpointRejectsInvalidRating(t *testing.T) {
 	e := newEnv(t)
 	e.addNote(t, "ciao", "hello", false)
-	q, _ := e.svc.Next(context.Background(), e.user, e.deck, timeNow())
+	q, _ := e.svc.Next(context.Background(), e.user, e.deck, at(timeNow()))
 
 	for _, body := range []string{`{"rating":0}`, `{"rating":5}`, `{"rating":-1}`, `{}`, `garbage`} {
 		rec := e.serve(t, e.user, http.MethodPost, "/api/cards/"+itoa(q.CardID)+"/answer", body)
@@ -139,7 +139,7 @@ func TestAnswerEndpointRejectsInvalidRating(t *testing.T) {
 func TestAnswerEndpointRefusesAnotherUsersCard(t *testing.T) {
 	e := newEnv(t)
 	e.addNote(t, "ciao", "hello", false)
-	q, _ := e.svc.Next(context.Background(), e.user, e.deck, timeNow())
+	q, _ := e.svc.Next(context.Background(), e.user, e.deck, at(timeNow()))
 
 	rec := e.serve(t, e.other, http.MethodPost, "/api/cards/"+itoa(q.CardID)+"/answer", `{"rating":3}`)
 	if rec.Code != http.StatusNotFound {

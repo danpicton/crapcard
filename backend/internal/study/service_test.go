@@ -79,7 +79,7 @@ func TestNextReturnsARenderedCard(t *testing.T) {
 	e := newEnv(t)
 	e.addNote(t, "ciao", "hello", false)
 
-	q, err := e.svc.Next(context.Background(), e.user, e.deck, time.Now())
+	q, err := e.svc.Next(context.Background(), e.user, e.deck, at(time.Now()))
 	if err != nil {
 		t.Fatalf("Next: %v", err)
 	}
@@ -104,13 +104,13 @@ func TestNextRendersAReversedCardBackwards(t *testing.T) {
 
 	seen := map[string]string{}
 	for range 2 {
-		q, err := e.svc.Next(ctx, e.user, e.deck, now)
+		q, err := e.svc.Next(ctx, e.user, e.deck, at(now))
 		if err != nil {
 			t.Fatalf("Next: %v", err)
 		}
 		seen[q.Template] = q.Question
 
-		if _, err := e.svc.Answer(ctx, e.user, q.CardID, srs.RatingEasy, now); err != nil {
+		if _, err := e.svc.Answer(ctx, e.user, q.CardID, srs.RatingEasy, at(now)); err != nil {
 			t.Fatalf("Answer: %v", err)
 		}
 	}
@@ -129,7 +129,7 @@ func TestNextIncludesTheIntervalEachAnswerWouldGive(t *testing.T) {
 	e := newEnv(t)
 	e.addNote(t, "ciao", "hello", false)
 
-	q, err := e.svc.Next(context.Background(), e.user, e.deck, time.Now())
+	q, err := e.svc.Next(context.Background(), e.user, e.deck, at(time.Now()))
 	if err != nil {
 		t.Fatalf("Next: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestNextReportsTheQueueCounts(t *testing.T) {
 	e.addNote(t, "ciao", "hello", false)
 	e.addNote(t, "grazie", "thanks", false)
 
-	q, err := e.svc.Next(context.Background(), e.user, e.deck, time.Now())
+	q, err := e.svc.Next(context.Background(), e.user, e.deck, at(time.Now()))
 	if err != nil {
 		t.Fatalf("Next: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestNextReportsTheQueueCounts(t *testing.T) {
 func TestNextReturnsErrQueueEmptyWhenNothingIsDue(t *testing.T) {
 	e := newEnv(t)
 
-	if _, err := e.svc.Next(context.Background(), e.user, e.deck, time.Now()); !errors.Is(err, study.ErrQueueEmpty) {
+	if _, err := e.svc.Next(context.Background(), e.user, e.deck, at(time.Now())); !errors.Is(err, study.ErrQueueEmpty) {
 		t.Fatalf("Next on an empty deck = %v, want ErrQueueEmpty", err)
 	}
 }
@@ -178,12 +178,12 @@ func TestAnswerSchedulesTheCardForward(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
 
-	q, err := e.svc.Next(ctx, e.user, e.deck, now)
+	q, err := e.svc.Next(ctx, e.user, e.deck, at(now))
 	if err != nil {
 		t.Fatalf("Next: %v", err)
 	}
 
-	res, err := e.svc.Answer(ctx, e.user, q.CardID, srs.RatingGood, now)
+	res, err := e.svc.Answer(ctx, e.user, q.CardID, srs.RatingGood, at(now))
 	if err != nil {
 		t.Fatalf("Answer: %v", err)
 	}
@@ -209,15 +209,15 @@ func TestAnsweringEverythingEmptiesTheQueue(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
 
-	q, err := e.svc.Next(ctx, e.user, e.deck, now)
+	q, err := e.svc.Next(ctx, e.user, e.deck, at(now))
 	if err != nil {
 		t.Fatalf("Next: %v", err)
 	}
-	if _, err := e.svc.Answer(ctx, e.user, q.CardID, srs.RatingEasy, now); err != nil {
+	if _, err := e.svc.Answer(ctx, e.user, q.CardID, srs.RatingEasy, at(now)); err != nil {
 		t.Fatalf("Answer: %v", err)
 	}
 
-	if _, err := e.svc.Next(ctx, e.user, e.deck, now); !errors.Is(err, study.ErrQueueEmpty) {
+	if _, err := e.svc.Next(ctx, e.user, e.deck, at(now)); !errors.Is(err, study.ErrQueueEmpty) {
 		t.Fatalf("Next after answering the only card = %v, want ErrQueueEmpty", err)
 	}
 }
@@ -228,9 +228,9 @@ func TestAnswerRefusesAnotherUsersCard(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
 
-	q, _ := e.svc.Next(ctx, e.user, e.deck, now)
+	q, _ := e.svc.Next(ctx, e.user, e.deck, at(now))
 
-	if _, err := e.svc.Answer(ctx, e.other, q.CardID, srs.RatingGood, now); !errors.Is(err, cards.ErrNotFound) {
+	if _, err := e.svc.Answer(ctx, e.other, q.CardID, srs.RatingGood, at(now)); !errors.Is(err, cards.ErrNotFound) {
 		t.Fatalf("cross-user Answer = %v, want ErrNotFound", err)
 	}
 	card, _ := e.cards.Get(ctx, e.user, q.CardID)
@@ -243,7 +243,7 @@ func TestNextIsScopedToTheOwner(t *testing.T) {
 	e := newEnv(t)
 	e.addNote(t, "ciao", "hello", false)
 
-	if _, err := e.svc.Next(context.Background(), e.other, e.deck, time.Now()); !errors.Is(err, study.ErrQueueEmpty) {
+	if _, err := e.svc.Next(context.Background(), e.other, e.deck, at(time.Now())); !errors.Is(err, study.ErrQueueEmpty) {
 		t.Fatalf("another user got a card from this deck: %v", err)
 	}
 }
@@ -254,8 +254,8 @@ func TestAgainBringsTheCardBackSoon(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
 
-	q, _ := e.svc.Next(ctx, e.user, e.deck, now)
-	res, err := e.svc.Answer(ctx, e.user, q.CardID, srs.RatingAgain, now)
+	q, _ := e.svc.Next(ctx, e.user, e.deck, at(now))
+	res, err := e.svc.Answer(ctx, e.user, q.CardID, srs.RatingAgain, at(now))
 	if err != nil {
 		t.Fatalf("Answer: %v", err)
 	}
@@ -264,7 +264,7 @@ func TestAgainBringsTheCardBackSoon(t *testing.T) {
 	}
 
 	// It should be back in the queue once that short step elapses.
-	if _, err := e.svc.Next(ctx, e.user, e.deck, res.Due.Add(time.Second)); err != nil {
+	if _, err := e.svc.Next(ctx, e.user, e.deck, at(res.Due.Add(time.Second))); err != nil {
 		t.Fatalf("card did not return after Again: %v", err)
 	}
 }
@@ -274,7 +274,7 @@ func TestFieldMarkdownReachesTheClientUntouched(t *testing.T) {
 	md := "**ciao** ![](/api/images/7)"
 	e.addNote(t, md, "hello", false)
 
-	q, err := e.svc.Next(context.Background(), e.user, e.deck, time.Now())
+	q, err := e.svc.Next(context.Background(), e.user, e.deck, at(time.Now()))
 	if err != nil {
 		t.Fatalf("Next: %v", err)
 	}
@@ -309,22 +309,22 @@ func TestNextAnywhereResumesTheMostRecentlyStudiedDeck(t *testing.T) {
 	}
 
 	// Study one card from each, the Anatomy one last.
-	q, err := e.svc.Next(ctx, e.user, e.deck, now)
+	q, err := e.svc.Next(ctx, e.user, e.deck, at(now))
 	if err != nil {
 		t.Fatalf("Next: %v", err)
 	}
-	if _, err := e.svc.Answer(ctx, e.user, q.CardID, srs.RatingGood, now.Add(-time.Hour)); err != nil {
+	if _, err := e.svc.Answer(ctx, e.user, q.CardID, srs.RatingGood, at(now.Add(-time.Hour))); err != nil {
 		t.Fatalf("Answer: %v", err)
 	}
-	q, err = e.svc.Next(ctx, e.user, other.ID, now)
+	q, err = e.svc.Next(ctx, e.user, other.ID, at(now))
 	if err != nil {
 		t.Fatalf("Next: %v", err)
 	}
-	if _, err := e.svc.Answer(ctx, e.user, q.CardID, srs.RatingGood, now); err != nil {
+	if _, err := e.svc.Answer(ctx, e.user, q.CardID, srs.RatingGood, at(now)); err != nil {
 		t.Fatalf("Answer: %v", err)
 	}
 
-	got, err := e.svc.NextAnywhere(ctx, e.user, now)
+	got, err := e.svc.NextAnywhere(ctx, e.user, at(now))
 	if err != nil {
 		t.Fatalf("NextAnywhere: %v", err)
 	}
@@ -340,7 +340,7 @@ func TestNextAnywhereWorksForAUserWhoHasStudiedNothing(t *testing.T) {
 	e := newEnv(t)
 	e.addNote(t, "ciao", "hello", false)
 
-	got, err := e.svc.NextAnywhere(context.Background(), e.user, time.Now())
+	got, err := e.svc.NextAnywhere(context.Background(), e.user, at(time.Now()))
 	if err != nil {
 		t.Fatalf("NextAnywhere: %v", err)
 	}
@@ -352,7 +352,70 @@ func TestNextAnywhereWorksForAUserWhoHasStudiedNothing(t *testing.T) {
 func TestNextAnywhereIsQueueEmptyWhenNothingIsDue(t *testing.T) {
 	e := newEnv(t)
 
-	if _, err := e.svc.NextAnywhere(context.Background(), e.user, time.Now()); !errors.Is(err, study.ErrQueueEmpty) {
+	if _, err := e.svc.NextAnywhere(context.Background(), e.user, at(time.Now())); !errors.Is(err, study.ErrQueueEmpty) {
 		t.Fatalf("NextAnywhere with no cards = %v, want ErrQueueEmpty", err)
+	}
+}
+
+// at wraps a moment in the UTC-day horizon the study service expects.
+func at(now time.Time) cards.Horizon { return cards.HorizonAt(now, 0) }
+
+func TestAnswerRefusesASuspendedCard(t *testing.T) {
+	// Suspension means "out of the study loop"; a stale tab holding the
+	// question must not be able to schedule the card anyway.
+	e := newEnv(t)
+	e.addNote(t, "ciao", "hello", false)
+	ctx := context.Background()
+	now := time.Now()
+
+	q, err := e.svc.Next(ctx, e.user, e.deck, at(now))
+	if err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	if err := e.cards.SetSuspended(ctx, e.user, q.CardID, true); err != nil {
+		t.Fatalf("SetSuspended: %v", err)
+	}
+	if _, err := e.svc.Answer(ctx, e.user, q.CardID, srs.RatingGood, at(now)); !errors.Is(err, study.ErrCardSuspended) {
+		t.Fatalf("Answer on a suspended card = %v, want ErrCardSuspended", err)
+	}
+}
+
+func TestUndoHandsBackTheCardJustAnswered(t *testing.T) {
+	e := newEnv(t)
+	e.addNote(t, "ciao", "hello", false)
+	ctx := context.Background()
+	now := time.Now()
+
+	q, err := e.svc.Next(ctx, e.user, e.deck, at(now))
+	if err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	if _, err := e.svc.Answer(ctx, e.user, q.CardID, srs.RatingEasy, at(now)); err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+
+	undone, err := e.svc.Undo(ctx, e.user, at(now))
+	if err != nil {
+		t.Fatalf("Undo: %v", err)
+	}
+	if undone.CardID != q.CardID {
+		t.Fatalf("undo returned card %d, want %d", undone.CardID, q.CardID)
+	}
+	if undone.State != srs.StateNew {
+		t.Fatalf("undone card state = %v, want new again", undone.State)
+	}
+
+	// The card is back in the queue, exactly where it was.
+	next, err := e.svc.Next(ctx, e.user, e.deck, at(now))
+	if err != nil {
+		t.Fatalf("Next after undo: %v", err)
+	}
+	if next.CardID != q.CardID {
+		t.Fatalf("queue serves card %d after undo, want %d", next.CardID, q.CardID)
+	}
+
+	// Nothing left once the only review is undone.
+	if _, err := e.svc.Undo(ctx, e.user, at(now)); !errors.Is(err, cards.ErrNothingToUndo) {
+		t.Fatalf("second undo = %v, want ErrNothingToUndo", err)
 	}
 }

@@ -265,6 +265,17 @@ func TestUnknownAPIRouteIs404NotTheSPA(t *testing.T) {
 	}
 }
 
+func TestOversizedJSONBodyIsRejected(t *testing.T) {
+	// An anonymous client must not be able to buffer arbitrary memory through
+	// an unauthenticated JSON endpoint.
+	c := newClient(t)
+	huge := `{"username":"` + strings.Repeat("A", 2<<20) + `","password":"x"}`
+	rec := c.do(http.MethodPost, "/api/auth/login", huge)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d for a 2MiB login body, want 400", rec.Code)
+	}
+}
+
 func TestSecurityHeadersArePresent(t *testing.T) {
 	c := newClient(t)
 

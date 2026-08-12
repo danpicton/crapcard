@@ -1,0 +1,9 @@
+ALTER TABLE review_log DROP COLUMN prev_due;
+ALTER TABLE review_log DROP COLUMN prev_stability;
+ALTER TABLE review_log DROP COLUMN prev_difficulty;
+ALTER TABLE review_log DROP COLUMN prev_elapsed_days;
+ALTER TABLE review_log DROP COLUMN prev_scheduled_days;
+ALTER TABLE review_log DROP COLUMN prev_reps;
+ALTER TABLE review_log DROP COLUMN prev_lapses;
+ALTER TABLE review_log DROP COLUMN prev_state;
+ALTER TABLE review_log DROP COLUMN prev_last_review;

@@ -211,6 +211,32 @@ func TestUpdateNoteEndpoint(t *testing.T) {
 	}
 }
 
+func TestUpdateNoteOmittingReversedKeepsTheReverseCard(t *testing.T) {
+	// A PUT that only round-trips fields must not read the missing "reversed"
+	// key as false: that would delete the reverse card and its entire review
+	// history on an innocent wording fix.
+	e := newRepoEnv(t)
+	n, err := e.repo.Create(context.Background(), e.user, basicInput(e.deck, "ciao", "hello", true))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	body := `{"fields": {"front": "ciao!", "back": "hello"}}`
+	rec := e.serve(t, e.user, http.MethodPut, "/api/notes/"+itoa(n.ID), body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	got, _ := e.repo.Get(context.Background(), e.user, n.ID)
+	if !got.Config.Reversed {
+		t.Fatalf("reversed flipped off by an update that omitted it")
+	}
+	list, _ := e.cards.ListForNote(context.Background(), e.user, n.ID)
+	if len(list) != 2 {
+		t.Fatalf("got %d cards after a fields-only update, want 2", len(list))
+	}
+}
+
 func TestDeleteNoteEndpoint(t *testing.T) {
 	e := newRepoEnv(t)
 	n, err := e.repo.Create(context.Background(), e.user, basicInput(e.deck, "ciao", "hello", false))
@@ -359,7 +385,7 @@ func TestNoteListCarriesLastStudied(t *testing.T) {
 	list, _ := e.cards.ListForNote(ctx, e.user, n.ID)
 	sched := srs.NewScheduler(srs.DefaultParams())
 	res := sched.Review(list[0].State, time.Now(), srs.RatingGood)
-	if err := e.cards.ApplyReview(ctx, e.user, list[0].ID, res.Card, res.Log); err != nil {
+	if err := e.cards.ApplyReview(ctx, e.user, list[0].ID, list[0].State, res.Card, res.Log); err != nil {
 		t.Fatalf("ApplyReview: %v", err)
 	}
 

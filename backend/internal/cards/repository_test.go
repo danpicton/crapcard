@@ -130,7 +130,7 @@ func TestSyncPreservesSchedulingOfCardsThatSurvive(t *testing.T) {
 
 	sched := srs.NewScheduler(srs.DefaultParams())
 	reviewed := sched.Review(forward.State, time.Now(), srs.RatingGood)
-	if err := e.repo.ApplyReview(ctx, e.user, forward.ID, reviewed.Card, reviewed.Log); err != nil {
+	if err := e.repo.ApplyReview(ctx, e.user, forward.ID, forward.State, reviewed.Card, reviewed.Log); err != nil {
 		t.Fatalf("ApplyReview: %v", err)
 	}
 
@@ -173,7 +173,7 @@ func TestApplyReviewPersistsStateAndWritesALogEntry(t *testing.T) {
 	sched := srs.NewScheduler(srs.DefaultParams())
 	res := sched.Review(card.State, now, srs.RatingHard)
 
-	if err := e.repo.ApplyReview(ctx, e.user, card.ID, res.Card, res.Log); err != nil {
+	if err := e.repo.ApplyReview(ctx, e.user, card.ID, card.State, res.Card, res.Log); err != nil {
 		t.Fatalf("ApplyReview: %v", err)
 	}
 
@@ -208,7 +208,7 @@ func TestApplyReviewRefusesAnotherUsersCard(t *testing.T) {
 	sched := srs.NewScheduler(srs.DefaultParams())
 	res := sched.Review(card.State, time.Now(), srs.RatingEasy)
 
-	if err := e.repo.ApplyReview(ctx, e.other, card.ID, res.Card, res.Log); !errors.Is(err, cards.ErrNotFound) {
+	if err := e.repo.ApplyReview(ctx, e.other, card.ID, card.State, res.Card, res.Log); !errors.Is(err, cards.ErrNotFound) {
 		t.Fatalf("cross-user ApplyReview = %v, want ErrNotFound", err)
 	}
 
@@ -235,7 +235,7 @@ func TestDueReturnsOnlyCardsThatAreReady(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
 
-	due, err := e.repo.Due(ctx, e.user, e.deck, now, 10)
+	due, err := e.repo.Due(ctx, e.user, e.deck, at(now), 10)
 	if err != nil {
 		t.Fatalf("Due: %v", err)
 	}
@@ -246,17 +246,17 @@ func TestDueReturnsOnlyCardsThatAreReady(t *testing.T) {
 	// Answer it, pushing it into the future.
 	sched := srs.NewScheduler(srs.DefaultParams())
 	res := sched.Review(due[0].State, now, srs.RatingEasy)
-	if err := e.repo.ApplyReview(ctx, e.user, due[0].ID, res.Card, res.Log); err != nil {
+	if err := e.repo.ApplyReview(ctx, e.user, due[0].ID, due[0].State, res.Card, res.Log); err != nil {
 		t.Fatalf("ApplyReview: %v", err)
 	}
 
-	due, _ = e.repo.Due(ctx, e.user, e.deck, now, 10)
+	due, _ = e.repo.Due(ctx, e.user, e.deck, at(now), 10)
 	if len(due) != 0 {
 		t.Fatalf("card is due again immediately after being answered Easy")
 	}
 
 	// It comes back once its due date arrives.
-	due, _ = e.repo.Due(ctx, e.user, e.deck, res.Card.Due.Add(time.Minute), 10)
+	due, _ = e.repo.Due(ctx, e.user, e.deck, at(res.Card.Due.Add(time.Minute)), 10)
 	if len(due) != 1 {
 		t.Fatalf("card did not return to the queue at its due date")
 	}
@@ -280,15 +280,15 @@ func TestDueRespectsLimitAndDeckAndOwner(t *testing.T) {
 		t.Fatalf("create note: %v", err)
 	}
 
-	due, _ := e.repo.Due(ctx, e.user, e.deck, now, 10)
+	due, _ := e.repo.Due(ctx, e.user, e.deck, at(now), 10)
 	if len(due) != 1 {
 		t.Fatalf("deck queue returned %d cards, want 1 — another deck leaked in", len(due))
 	}
 
-	if due, _ = e.repo.Due(ctx, e.user, e.deck, now, 0); len(due) != 0 {
+	if due, _ = e.repo.Due(ctx, e.user, e.deck, at(now), 0); len(due) != 0 {
 		t.Fatalf("limit 0 returned %d cards", len(due))
 	}
-	if due, _ = e.repo.Due(ctx, e.other, e.deck, now, 10); len(due) != 0 {
+	if due, _ = e.repo.Due(ctx, e.other, e.deck, at(now), 10); len(due) != 0 {
 		t.Fatalf("another user saw %d cards from this deck", len(due))
 	}
 }
@@ -298,7 +298,7 @@ func TestCountsSummariseTheQueue(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
 
-	counts, err := e.repo.Counts(ctx, e.user, e.deck, now)
+	counts, err := e.repo.Counts(ctx, e.user, e.deck, at(now))
 	if err != nil {
 		t.Fatalf("Counts: %v", err)
 	}
@@ -306,14 +306,14 @@ func TestCountsSummariseTheQueue(t *testing.T) {
 		t.Fatalf("counts = %+v, want one new card", counts)
 	}
 
-	due, _ := e.repo.Due(ctx, e.user, e.deck, now, 10)
+	due, _ := e.repo.Due(ctx, e.user, e.deck, at(now), 10)
 	sched := srs.NewScheduler(srs.DefaultParams())
 	res := sched.Review(due[0].State, now, srs.RatingAgain)
-	if err := e.repo.ApplyReview(ctx, e.user, due[0].ID, res.Card, res.Log); err != nil {
+	if err := e.repo.ApplyReview(ctx, e.user, due[0].ID, due[0].State, res.Card, res.Log); err != nil {
 		t.Fatalf("ApplyReview: %v", err)
 	}
 
-	counts, _ = e.repo.Counts(ctx, e.user, e.deck, now)
+	counts, _ = e.repo.Counts(ctx, e.user, e.deck, at(now))
 	if counts.New != 0 {
 		t.Fatalf("card still counted as new after being answered: %+v", counts)
 	}
@@ -366,21 +366,21 @@ func TestNextDeckToStudyPrefersTheMostRecentlyStudied(t *testing.T) {
 	}
 
 	// Study one card in each deck, the "Recent" one more recently.
-	study := func(deckID int64, at time.Time) {
+	study := func(deckID int64, when time.Time) {
 		t.Helper()
-		due, err := e.repo.Due(ctx, e.user, deckID, now, 1)
+		due, err := e.repo.Due(ctx, e.user, deckID, at(now), 1)
 		if err != nil || len(due) == 0 {
 			t.Fatalf("no due card in deck %d: %v", deckID, err)
 		}
-		res := sched.Review(due[0].State, at, srs.RatingGood)
-		if err := e.repo.ApplyReview(ctx, e.user, due[0].ID, res.Card, res.Log); err != nil {
+		res := sched.Review(due[0].State, when, srs.RatingGood)
+		if err := e.repo.ApplyReview(ctx, e.user, due[0].ID, due[0].State, res.Card, res.Log); err != nil {
 			t.Fatalf("ApplyReview: %v", err)
 		}
 	}
 	study(older.ID, now.Add(-72*time.Hour))
 	study(recent.ID, now.Add(-1*time.Hour))
 
-	got, err := e.repo.NextDeckToStudy(ctx, e.user, now)
+	got, err := e.repo.NextDeckToStudy(ctx, e.user, at(now))
 	if err != nil {
 		t.Fatalf("NextDeckToStudy: %v", err)
 	}
@@ -393,7 +393,7 @@ func TestNextDeckToStudyFallsBackToAnUnstudiedDeck(t *testing.T) {
 	// A brand new user has studied nothing, but still has cards waiting.
 	e := newEnv(t)
 
-	got, err := e.repo.NextDeckToStudy(context.Background(), e.user, time.Now())
+	got, err := e.repo.NextDeckToStudy(context.Background(), e.user, at(time.Now()))
 	if err != nil {
 		t.Fatalf("NextDeckToStudy: %v", err)
 	}
@@ -408,10 +408,10 @@ func TestNextDeckToStudySkipsDecksWithNothingDue(t *testing.T) {
 	now := time.Now()
 
 	// Answer the only card in the seeded deck, so it has nothing left.
-	due, _ := e.repo.Due(ctx, e.user, e.deck, now, 1)
+	due, _ := e.repo.Due(ctx, e.user, e.deck, at(now), 1)
 	sched := srs.NewScheduler(srs.DefaultParams())
 	res := sched.Review(due[0].State, now, srs.RatingEasy)
-	if err := e.repo.ApplyReview(ctx, e.user, due[0].ID, res.Card, res.Log); err != nil {
+	if err := e.repo.ApplyReview(ctx, e.user, due[0].ID, due[0].State, res.Card, res.Log); err != nil {
 		t.Fatalf("ApplyReview: %v", err)
 	}
 
@@ -427,7 +427,7 @@ func TestNextDeckToStudySkipsDecksWithNothingDue(t *testing.T) {
 		t.Fatalf("create note: %v", err)
 	}
 
-	got, err := e.repo.NextDeckToStudy(ctx, e.user, now)
+	got, err := e.repo.NextDeckToStudy(ctx, e.user, at(now))
 	if err != nil {
 		t.Fatalf("NextDeckToStudy: %v", err)
 	}
@@ -441,14 +441,14 @@ func TestNextDeckToStudyReturnsErrNotFoundWhenNothingIsDueAnywhere(t *testing.T)
 	ctx := context.Background()
 	now := time.Now()
 
-	due, _ := e.repo.Due(ctx, e.user, e.deck, now, 1)
+	due, _ := e.repo.Due(ctx, e.user, e.deck, at(now), 1)
 	sched := srs.NewScheduler(srs.DefaultParams())
 	res := sched.Review(due[0].State, now, srs.RatingEasy)
-	if err := e.repo.ApplyReview(ctx, e.user, due[0].ID, res.Card, res.Log); err != nil {
+	if err := e.repo.ApplyReview(ctx, e.user, due[0].ID, due[0].State, res.Card, res.Log); err != nil {
 		t.Fatalf("ApplyReview: %v", err)
 	}
 
-	if _, err := e.repo.NextDeckToStudy(ctx, e.user, now); !errors.Is(err, cards.ErrNotFound) {
+	if _, err := e.repo.NextDeckToStudy(ctx, e.user, at(now)); !errors.Is(err, cards.ErrNotFound) {
 		t.Fatalf("NextDeckToStudy with nothing due = %v, want ErrNotFound", err)
 	}
 }
@@ -456,7 +456,190 @@ func TestNextDeckToStudyReturnsErrNotFoundWhenNothingIsDueAnywhere(t *testing.T)
 func TestNextDeckToStudyIsScopedToTheOwner(t *testing.T) {
 	e := newEnv(t)
 
-	if _, err := e.repo.NextDeckToStudy(context.Background(), e.other, time.Now()); !errors.Is(err, cards.ErrNotFound) {
+	if _, err := e.repo.NextDeckToStudy(context.Background(), e.other, at(time.Now())); !errors.Is(err, cards.ErrNotFound) {
 		t.Fatalf("another user was offered a deck: %v", err)
+	}
+}
+
+// at wraps a moment in the UTC-day horizon the queue queries expect.
+func at(now time.Time) cards.Horizon { return cards.HorizonAt(now, 0) }
+
+// addCard creates one more basic note in the env's deck and returns its
+// card's id.
+func addCard(t *testing.T, e *env) int64 {
+	t.Helper()
+	ctx := context.Background()
+	n, err := notes.NewRepository(e.db).Create(ctx, e.user, notes.CreateInput{
+		DeckID: e.deck, Type: notes.TypeBasic,
+		Fields: []notes.Field{{Name: "front", Value: "a"}, {Name: "back", Value: "b"}},
+	})
+	if err != nil {
+		t.Fatalf("create note: %v", err)
+	}
+	list, err := e.repo.ListForNote(ctx, e.user, n.ID)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("cards for new note: %v", err)
+	}
+	return list[0].ID
+}
+
+// review forces a card into review state with the given due date, as if FSRS
+// had scheduled it there, so queue tests can stage precise scenarios.
+func review(t *testing.T, e *env, cardID int64, due time.Time) {
+	t.Helper()
+	state := srs.CardState{
+		Due: due, Stability: 10, Difficulty: 5,
+		Reps: 3, State: srs.StateReview, LastReview: due.Add(-72 * time.Hour),
+	}
+	log := srs.ReviewLog{Rating: srs.RatingGood, State: srs.StateReview, Review: state.LastReview}
+	prev, err := e.repo.Get(context.Background(), e.user, cardID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if err := e.repo.ApplyReview(context.Background(), e.user, cardID, prev.State, state, log); err != nil {
+		t.Fatalf("ApplyReview: %v", err)
+	}
+}
+
+func TestDueServesReviewsBeforeNewCards(t *testing.T) {
+	// A batch of freshly authored cards must not starve the reviews FSRS
+	// actually scheduled for today: new cards carry the zero-time due date,
+	// which would otherwise sort them to the very front forever.
+	e := newEnv(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	list, _ := e.repo.ListForNote(ctx, e.user, e.note)
+	overdue := list[0].ID
+	review(t, e, overdue, now.Add(-2*time.Hour))
+	newCard := addCard(t, e)
+
+	due, err := e.repo.Due(ctx, e.user, e.deck, at(now), 10)
+	if err != nil {
+		t.Fatalf("Due: %v", err)
+	}
+	if len(due) != 2 {
+		t.Fatalf("got %d due cards, want 2", len(due))
+	}
+	if due[0].ID != overdue || due[1].ID != newCard {
+		t.Fatalf("queue order = [%d %d], want the overdue review before the new card", due[0].ID, due[1].ID)
+	}
+}
+
+func TestReviewDueLaterTodayCountsAsDue(t *testing.T) {
+	// Day-scale scheduling is only meaningful at day granularity: a review due
+	// at 14:00 must show up at the morning study session, not silently drift.
+	e := newEnv(t)
+	ctx := context.Background()
+	now := time.Date(2026, 3, 10, 9, 0, 0, 0, time.UTC)
+
+	list, _ := e.repo.ListForNote(ctx, e.user, e.note)
+	card := list[0].ID
+	review(t, e, card, now.Add(5*time.Hour)) // due 14:00, same UTC day
+
+	due, _ := e.repo.Due(ctx, e.user, e.deck, at(now), 10)
+	if len(due) != 1 {
+		t.Fatalf("review due later today missing from the queue (got %d cards)", len(due))
+	}
+	counts, _ := e.repo.Counts(ctx, e.user, e.deck, at(now))
+	if counts.Due != 1 {
+		t.Fatalf("counts.Due = %d, want 1", counts.Due)
+	}
+
+	// The same card due tomorrow is not due today.
+	review(t, e, card, now.Add(20*time.Hour))
+	if due, _ = e.repo.Due(ctx, e.user, e.deck, at(now), 10); len(due) != 0 {
+		t.Fatalf("review due tomorrow served today")
+	}
+}
+
+func TestHorizonFollowsTheClientDay(t *testing.T) {
+	// 9:00 UTC, client at UTC+10 (19:00 local): their day ends at 14:00 UTC.
+	now := time.Date(2026, 3, 10, 9, 0, 0, 0, time.UTC)
+	h := cards.HorizonAt(now, 600)
+	want := time.Date(2026, 3, 10, 14, 0, 0, 0, time.UTC)
+	if !h.ReviewDueBefore.Equal(want) {
+		t.Fatalf("ReviewDueBefore = %v, want %v", h.ReviewDueBefore, want)
+	}
+
+	// An absurd offset falls back to UTC days rather than a broken horizon.
+	h = cards.HorizonAt(now, 100000)
+	want = time.Date(2026, 3, 11, 0, 0, 0, 0, time.UTC)
+	if !h.ReviewDueBefore.Equal(want) {
+		t.Fatalf("clamped ReviewDueBefore = %v, want %v", h.ReviewDueBefore, want)
+	}
+}
+
+func TestUndoLastReviewRestoresTheCard(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	list, _ := e.repo.ListForNote(ctx, e.user, e.note)
+	card := list[0]
+
+	sched := srs.NewScheduler(srs.DefaultParams())
+	res := sched.Review(card.State, time.Now(), srs.RatingGood)
+	if err := e.repo.ApplyReview(ctx, e.user, card.ID, card.State, res.Card, res.Log); err != nil {
+		t.Fatalf("ApplyReview: %v", err)
+	}
+
+	gotID, err := e.repo.UndoLastReview(ctx, e.user)
+	if err != nil {
+		t.Fatalf("UndoLastReview: %v", err)
+	}
+	if gotID != card.ID {
+		t.Fatalf("undid card %d, want %d", gotID, card.ID)
+	}
+
+	after, _ := e.repo.Get(ctx, e.user, card.ID)
+	if after.State.Reps != 0 || after.State.State != srs.StateNew {
+		t.Fatalf("card not restored: reps=%d state=%v", after.State.Reps, after.State.State)
+	}
+	logs, _ := e.repo.ReviewLog(ctx, e.user, card.ID)
+	if len(logs) != 0 {
+		t.Fatalf("review log still has %d entries after undo", len(logs))
+	}
+
+	// With the history gone there is nothing left to undo.
+	if _, err := e.repo.UndoLastReview(ctx, e.user); !errors.Is(err, cards.ErrNothingToUndo) {
+		t.Fatalf("second undo = %v, want ErrNothingToUndo", err)
+	}
+}
+
+func TestUndoIsScopedToTheUser(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	list, _ := e.repo.ListForNote(ctx, e.user, e.note)
+	card := list[0]
+
+	sched := srs.NewScheduler(srs.DefaultParams())
+	res := sched.Review(card.State, time.Now(), srs.RatingGood)
+	if err := e.repo.ApplyReview(ctx, e.user, card.ID, card.State, res.Card, res.Log); err != nil {
+		t.Fatalf("ApplyReview: %v", err)
+	}
+
+	if _, err := e.repo.UndoLastReview(ctx, e.other); !errors.Is(err, cards.ErrNothingToUndo) {
+		t.Fatalf("another user undid a review: %v", err)
+	}
+}
+
+func TestApplyReviewRefusesADuplicateSubmit(t *testing.T) {
+	// A retry or a second tab submitting the same answer twice must not
+	// double-count the review.
+	e := newEnv(t)
+	ctx := context.Background()
+	list, _ := e.repo.ListForNote(ctx, e.user, e.note)
+	card := list[0]
+
+	sched := srs.NewScheduler(srs.DefaultParams())
+	res := sched.Review(card.State, time.Now(), srs.RatingGood)
+	if err := e.repo.ApplyReview(ctx, e.user, card.ID, card.State, res.Card, res.Log); err != nil {
+		t.Fatalf("ApplyReview: %v", err)
+	}
+	if err := e.repo.ApplyReview(ctx, e.user, card.ID, card.State, res.Card, res.Log); !errors.Is(err, cards.ErrStaleReview) {
+		t.Fatalf("duplicate ApplyReview = %v, want ErrStaleReview", err)
+	}
+	logs, _ := e.repo.ReviewLog(ctx, e.user, card.ID)
+	if len(logs) != 1 {
+		t.Fatalf("duplicate submit left %d log entries, want 1", len(logs))
 	}
 }

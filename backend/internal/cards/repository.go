@@ -20,6 +20,16 @@ import (
 // user.
 var ErrNotFound = errors.New("card not found")
 
+// ErrStaleReview is returned when an answer arrives for a card whose state
+// has moved on since the client read it — a double submit or a second tab.
+// Applying it anyway would double-count the review and corrupt the history a
+// future FSRS optimiser trains on.
+var ErrStaleReview = errors.New("card was already answered")
+
+// ErrNothingToUndo is returned when the user has no undoable review — none at
+// all, or the latest predates snapshot support.
+var ErrNothingToUndo = errors.New("nothing to undo")
+
 // Card is one scheduled item generated from a note.
 type Card struct {
 	ID        int64
@@ -208,19 +218,71 @@ func (r *Repository) Get(ctx context.Context, userID, cardID int64) (*Card, erro
 	return c, nil
 }
 
-// Due returns cards from the deck that are ready to study at `now`, oldest
-// due date first, capped at limit.
-func (r *Repository) Due(ctx context.Context, userID, deckID int64, now time.Time, limit int) ([]*Card, error) {
+// Horizon carries the two instants the queue queries gate on.
+//
+// Now is the exact moment, used for learning steps (a card answered Again
+// really should wait its few minutes) and for new cards. ReviewDueBefore is
+// the end of the user's local calendar day: a review card due at 14:00 counts
+// as due at the 09:00 study session, because day-scale scheduling is only
+// meaningful at day granularity — gating on the exact timestamp would make
+// every interval silently drift toward the user's latest-ever study time.
+type Horizon struct {
+	Now             time.Time
+	ReviewDueBefore time.Time
+}
+
+// maxTZOffsetMinutes bounds a client-supplied UTC offset to the range real
+// timezones occupy (UTC-12 to UTC+14).
+const maxTZOffsetMinutes = 14 * 60
+
+// HorizonAt builds the study horizon for a user whose local clock is
+// offsetMinutes east of UTC (what JavaScript's -getTimezoneOffset() reports).
+// An out-of-range offset is treated as UTC rather than rejected — the worst a
+// forged value can do is shift the caller's own day boundary.
+func HorizonAt(now time.Time, offsetMinutes int) Horizon {
+	if offsetMinutes < -maxTZOffsetMinutes || offsetMinutes > maxTZOffsetMinutes {
+		offsetMinutes = 0
+	}
+	offset := time.Duration(offsetMinutes) * time.Minute
+	local := now.UTC().Add(offset)
+	y, m, d := local.Date()
+	nextLocalMidnight := time.Date(y, m, d, 0, 0, 0, 0, time.UTC).AddDate(0, 0, 1)
+	return Horizon{Now: now, ReviewDueBefore: nextLocalMidnight.Add(-offset)}
+}
+
+// dueSQL builds the clause gating a card on the horizon: review cards on the
+// day boundary, everything else on the exact moment. prefix qualifies the
+// column names for queries that alias the table. Bind dueClauseArgs alongside.
+func dueSQL(prefix string) string {
+	return fmt.Sprintf(`((%[1]sstate=%[2]d AND %[1]sdue<?) OR (%[1]sstate<>%[2]d AND %[1]sdue<=?))`,
+		prefix, srs.StateReview)
+}
+
+var dueClause = dueSQL("")
+
+func (h Horizon) dueClauseArgs() []any {
+	return []any{h.ReviewDueBefore.UTC(), h.Now.UTC()}
+}
+
+// Due returns cards from the deck that are ready to study, capped at limit.
+//
+// Cards mid-flight — learning, relearning and due reviews — come first,
+// oldest due date first; cards never seen (state new, zero-time due) come
+// last. Without that split, a batch of freshly authored cards would starve
+// every review that FSRS actually scheduled for today.
+func (r *Repository) Due(ctx context.Context, userID, deckID int64, h Horizon, limit int) ([]*Card, error) {
 	if limit <= 0 {
 		return []*Card{}, nil
 	}
 
+	args := append([]any{userID, deckID}, h.dueClauseArgs()...)
+	args = append(args, int(srs.StateNew), limit)
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT `+cardColumns+` FROM cards
-		 WHERE user_id=? AND deck_id=? AND suspended=0 AND due<=?
-		 ORDER BY due, id
+		 WHERE user_id=? AND deck_id=? AND suspended=0 AND `+dueClause+`
+		 ORDER BY CASE WHEN state=? THEN 1 ELSE 0 END, due, id
 		 LIMIT ?`,
-		userID, deckID, now.UTC(), limit)
+		args...)
 	if err != nil {
 		return nil, fmt.Errorf("due cards: %w", err)
 	}
@@ -247,11 +309,12 @@ func (r *Repository) Due(ctx context.Context, userID, deckID int64, now time.Tim
 // over a fresh one.
 //
 // Returns ErrNotFound when nothing is due anywhere.
-func (r *Repository) NextDeckToStudy(ctx context.Context, userID int64, now time.Time) (int64, error) {
+func (r *Repository) NextDeckToStudy(ctx context.Context, userID int64, h Horizon) (int64, error) {
 	// Recency is measured across the deck's whole history, not just the cards
 	// still due: answering a card pushes it out of the due set, so ranking on
 	// the due cards alone would make the deck you just studied look untouched.
 	var deckID int64
+	args := append([]any{userID, userID}, h.dueClauseArgs()...)
 	err := r.db.QueryRowContext(ctx,
 		`SELECT ranked.deck_id
 		 FROM (
@@ -262,11 +325,11 @@ func (r *Repository) NextDeckToStudy(ctx context.Context, userID int64, now time
 		 ) AS ranked
 		 WHERE EXISTS (
 		   SELECT 1 FROM cards c
-		   WHERE c.user_id=? AND c.deck_id=ranked.deck_id AND c.suspended=0 AND c.due<=?
+		   WHERE c.user_id=? AND c.deck_id=ranked.deck_id AND c.suspended=0 AND `+dueSQL("c.")+`
 		 )
 		 ORDER BY ranked.recency DESC, ranked.deck_id
 		 LIMIT 1`,
-		userID, userID, now.UTC(),
+		args...,
 	).Scan(&deckID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, ErrNotFound
@@ -285,18 +348,18 @@ func (r *Repository) NextDeckToStudy(ctx context.Context, userID int64, now time
 // Again is due a few minutes later, and gating it would empty the counts the
 // instant the user answered — the card is still in flight for this session,
 // so it keeps being counted until it graduates.
-func (r *Repository) Counts(ctx context.Context, userID, deckID int64, now time.Time) (Counts, error) {
+func (r *Repository) Counts(ctx context.Context, userID, deckID int64, h Horizon) (Counts, error) {
 	var c Counts
 	err := r.db.QueryRowContext(ctx,
 		`SELECT
 		   COALESCE(SUM(CASE WHEN state=? AND due<=? THEN 1 ELSE 0 END), 0),
 		   COALESCE(SUM(CASE WHEN state IN (?, ?)        THEN 1 ELSE 0 END), 0),
-		   COALESCE(SUM(CASE WHEN state=? AND due<=? THEN 1 ELSE 0 END), 0)
+		   COALESCE(SUM(CASE WHEN state=? AND due<? THEN 1 ELSE 0 END), 0)
 		 FROM cards
 		 WHERE user_id=? AND deck_id=? AND suspended=0`,
-		int(srs.StateNew), now.UTC(),
+		int(srs.StateNew), h.Now.UTC(),
 		int(srs.StateLearning), int(srs.StateRelearning),
-		int(srs.StateReview), now.UTC(),
+		int(srs.StateReview), h.ReviewDueBefore.UTC(),
 		userID, deckID,
 	).Scan(&c.New, &c.Learning, &c.Due)
 	if err != nil {
@@ -305,42 +368,66 @@ func (r *Repository) Counts(ctx context.Context, userID, deckID int64, now time.
 	return c, nil
 }
 
+// nullableTime renders a time for a nullable DATETIME column: the zero time
+// becomes NULL rather than year 1.
+func nullableTime(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t.UTC()
+}
+
 // ApplyReview stores the card's new scheduling state and appends the answer
-// to the review log, in one transaction. The card must belong to the user.
-func (r *Repository) ApplyReview(ctx context.Context, userID, cardID int64, state srs.CardState, entry srs.ReviewLog) error {
+// to the review log — which also snapshots the state the card is leaving, so
+// the review can be undone. Everything happens in one transaction, and the
+// card must belong to the user.
+//
+// prev is the state the caller computed the review from; the update is
+// guarded on its rep count so a duplicate submit (a retry, a second tab)
+// returns ErrStaleReview instead of double-counting the answer.
+func (r *Repository) ApplyReview(ctx context.Context, userID, cardID int64, prev, state srs.CardState, entry srs.ReviewLog) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin review tx: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	var lastReview any
-	if !state.LastReview.IsZero() {
-		lastReview = state.LastReview.UTC()
-	}
-
 	res, err := tx.ExecContext(ctx,
 		`UPDATE cards SET
 		   due=?, stability=?, difficulty=?, elapsed_days=?, scheduled_days=?,
 		   reps=?, lapses=?, state=?, last_review=?
-		 WHERE id=? AND user_id=?`,
+		 WHERE id=? AND user_id=? AND reps=?`,
 		state.Due.UTC(), state.Stability, state.Difficulty,
 		state.ElapsedDays, state.ScheduledDays,
-		state.Reps, state.Lapses, int(state.State), lastReview,
-		cardID, userID,
+		state.Reps, state.Lapses, int(state.State), nullableTime(state.LastReview),
+		cardID, userID, prev.Reps,
 	)
 	if err != nil {
 		return fmt.Errorf("update card state: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
+		// Missing card and stale state both land here; look again to tell
+		// the caller which it was.
+		var exists int
+		if err := tx.QueryRowContext(ctx,
+			`SELECT 1 FROM cards WHERE id=? AND user_id=?`, cardID, userID,
+		).Scan(&exists); err == nil {
+			return ErrStaleReview
+		}
 		return ErrNotFound
 	}
 
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO review_log(card_id, user_id, rating, state, elapsed_days, scheduled_days, reviewed_at)
-		 VALUES(?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO review_log(
+		   card_id, user_id, rating, state, elapsed_days, scheduled_days, reviewed_at,
+		   prev_due, prev_stability, prev_difficulty, prev_elapsed_days,
+		   prev_scheduled_days, prev_reps, prev_lapses, prev_state, prev_last_review)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		cardID, userID, int(entry.Rating), int(entry.State),
 		entry.ElapsedDays, entry.ScheduledDays, entry.Review.UTC(),
+		prev.Due.UTC(), prev.Stability, prev.Difficulty, prev.ElapsedDays,
+		prev.ScheduledDays, prev.Reps, prev.Lapses, int(prev.State),
+		nullableTime(prev.LastReview),
 	); err != nil {
 		return fmt.Errorf("insert review log: %w", err)
 	}
@@ -348,6 +435,102 @@ func (r *Repository) ApplyReview(ctx context.Context, userID, cardID int64, stat
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit review: %w", err)
 	}
+	return nil
+}
+
+// UndoLastReview reverts the user's most recent answer: the card goes back to
+// exactly the state the review log snapshotted, and the log entry disappears
+// as if the answer had never been given. Returns the card's id.
+//
+// Only the single latest review (across all the user's decks) is undoable —
+// this is the study screen's "oops, wrong button", not history editing.
+func (r *Repository) UndoLastReview(ctx context.Context, userID int64) (int64, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("begin undo tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	var (
+		logID, cardID int64
+		prevDue       sql.NullTime
+		prev          srs.CardState
+		prevState     sql.NullInt64
+		prevLast      sql.NullTime
+	)
+	err = tx.QueryRowContext(ctx,
+		`SELECT id, card_id, prev_due, prev_stability, prev_difficulty,
+		        prev_elapsed_days, prev_scheduled_days, prev_reps, prev_lapses,
+		        prev_state, prev_last_review
+		 FROM review_log WHERE user_id=? ORDER BY id DESC LIMIT 1`,
+		userID,
+	).Scan(&logID, &cardID, &prevDue,
+		&nullFloat{&prev.Stability}, &nullFloat{&prev.Difficulty},
+		&nullUint{&prev.ElapsedDays}, &nullUint{&prev.ScheduledDays},
+		&nullUint{&prev.Reps}, &nullUint{&prev.Lapses},
+		&prevState, &prevLast)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNothingToUndo
+	}
+	if err != nil {
+		return 0, fmt.Errorf("read last review: %w", err)
+	}
+	if !prevDue.Valid || !prevState.Valid {
+		// Logged before snapshots existed; nothing safe to restore.
+		return 0, ErrNothingToUndo
+	}
+	prev.Due = prevDue.Time
+	prev.State = srs.State(prevState.Int64)
+	if prevLast.Valid {
+		prev.LastReview = prevLast.Time
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE cards SET
+		   due=?, stability=?, difficulty=?, elapsed_days=?, scheduled_days=?,
+		   reps=?, lapses=?, state=?, last_review=?
+		 WHERE id=? AND user_id=?`,
+		prev.Due.UTC(), prev.Stability, prev.Difficulty,
+		prev.ElapsedDays, prev.ScheduledDays,
+		prev.Reps, prev.Lapses, int(prev.State), nullableTime(prev.LastReview),
+		cardID, userID,
+	); err != nil {
+		return 0, fmt.Errorf("restore card state: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM review_log WHERE id=?`, logID,
+	); err != nil {
+		return 0, fmt.Errorf("delete review log entry: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit undo: %w", err)
+	}
+	return cardID, nil
+}
+
+// nullFloat and nullUint scan nullable numeric columns straight into the
+// snapshot's fields, reading NULL as zero.
+type nullFloat struct{ v *float64 }
+
+func (n *nullFloat) Scan(src any) error {
+	var f sql.NullFloat64
+	if err := f.Scan(src); err != nil {
+		return err
+	}
+	*n.v = f.Float64
+	return nil
+}
+
+type nullUint struct{ v *uint64 }
+
+func (n *nullUint) Scan(src any) error {
+	var i sql.NullInt64
+	if err := i.Scan(src); err != nil {
+		return err
+	}
+	*n.v = uint64(max(i.Int64, 0))
 	return nil
 }
 

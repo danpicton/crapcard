@@ -22,6 +22,10 @@ import (
 // ErrQueueEmpty is returned when nothing in the deck is due.
 var ErrQueueEmpty = errors.New("nothing due in this deck")
 
+// ErrCardSuspended is returned when an answer arrives for a suspended card.
+// Suspension means "out of the study loop"; a stale tab must not schedule it.
+var ErrCardSuspended = errors.New("card is suspended")
+
 // Preview is what one possible answer would do to the card.
 type Preview struct {
 	Interval time.Duration
@@ -79,29 +83,32 @@ func NewService(
 // NextAnywhere returns the next due card without the caller naming a deck,
 // picking up wherever the user last left off. It backs the landing screen:
 // signing in should put a card in front of you, not a menu.
-func (s *Service) NextAnywhere(ctx context.Context, userID int64, now time.Time) (*Question, error) {
-	deckID, err := s.cards.NextDeckToStudy(ctx, userID, now)
+func (s *Service) NextAnywhere(ctx context.Context, userID int64, h cards.Horizon) (*Question, error) {
+	deckID, err := s.cards.NextDeckToStudy(ctx, userID, h)
 	if errors.Is(err, cards.ErrNotFound) {
 		return nil, ErrQueueEmpty
 	}
 	if err != nil {
 		return nil, err
 	}
-	return s.Next(ctx, userID, deckID, now)
+	return s.Next(ctx, userID, deckID, h)
 }
 
 // Next returns the next due card in the deck, rendered, along with the
 // interval each possible answer would produce.
-func (s *Service) Next(ctx context.Context, userID, deckID int64, now time.Time) (*Question, error) {
-	due, err := s.cards.Due(ctx, userID, deckID, now, 1)
+func (s *Service) Next(ctx context.Context, userID, deckID int64, h cards.Horizon) (*Question, error) {
+	due, err := s.cards.Due(ctx, userID, deckID, h, 1)
 	if err != nil {
 		return nil, err
 	}
 	if len(due) == 0 {
 		return nil, ErrQueueEmpty
 	}
-	card := due[0]
+	return s.question(ctx, userID, due[0], h)
+}
 
+// question renders one card as a ready-to-show Question.
+func (s *Service) question(ctx context.Context, userID int64, card *cards.Card, h cards.Horizon) (*Question, error) {
 	note, err := s.notes.Get(ctx, userID, card.NoteID)
 	if err != nil {
 		return nil, fmt.Errorf("load note for card %d: %w", card.ID, err)
@@ -115,7 +122,7 @@ func (s *Service) Next(ctx context.Context, userID, deckID int64, now time.Time)
 		return nil, fmt.Errorf("render card %d: %w", card.ID, err)
 	}
 
-	counts, err := s.cards.Counts(ctx, userID, deckID, now)
+	counts, err := s.cards.Counts(ctx, userID, card.DeckID, h)
 	if err != nil {
 		return nil, err
 	}
@@ -135,8 +142,22 @@ func (s *Service) Next(ctx context.Context, userID, deckID int64, now time.Time)
 		Answer:   rendered.Answer,
 		State:    card.State.State,
 		Counts:   counts,
-		Previews: s.previews(card.State, now),
+		Previews: s.previews(card.State, h.Now),
 	}, nil
+}
+
+// Undo reverts the user's most recent answer and hands the card back,
+// rendered and revealed, so it can simply be graded again.
+func (s *Service) Undo(ctx context.Context, userID int64, h cards.Horizon) (*Question, error) {
+	cardID, err := s.cards.UndoLastReview(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	card, err := s.cards.Get(ctx, userID, cardID)
+	if err != nil {
+		return nil, err
+	}
+	return s.question(ctx, userID, card, h)
 }
 
 // previews turns the scheduler's per-rating outcomes into intervals for the
@@ -153,25 +174,28 @@ func (s *Service) previews(state srs.CardState, now time.Time) map[srs.Rating]Pr
 }
 
 // Answer applies a rating to a card and persists the result.
-func (s *Service) Answer(ctx context.Context, userID, cardID int64, rating srs.Rating, now time.Time) (*AnswerResult, error) {
+func (s *Service) Answer(ctx context.Context, userID, cardID int64, rating srs.Rating, h cards.Horizon) (*AnswerResult, error) {
 	card, err := s.cards.Get(ctx, userID, cardID)
 	if err != nil {
 		return nil, err
 	}
+	if card.Suspended {
+		return nil, ErrCardSuspended
+	}
 
-	res := s.sched.Review(card.State, now, rating)
-	if err := s.cards.ApplyReview(ctx, userID, cardID, res.Card, res.Log); err != nil {
+	res := s.sched.Review(card.State, h.Now, rating)
+	if err := s.cards.ApplyReview(ctx, userID, cardID, card.State, res.Card, res.Log); err != nil {
 		return nil, err
 	}
 
-	counts, err := s.cards.Counts(ctx, userID, card.DeckID, now)
+	counts, err := s.cards.Counts(ctx, userID, card.DeckID, h)
 	if err != nil {
 		return nil, err
 	}
 
 	return &AnswerResult{
 		CardID:   cardID,
-		Interval: res.Card.Due.Sub(now),
+		Interval: res.Card.Due.Sub(h.Now),
 		Due:      res.Card.Due,
 		State:    res.Card.State,
 		Counts:   counts,
@@ -180,6 +204,6 @@ func (s *Service) Answer(ctx context.Context, userID, cardID int64, rating srs.R
 
 // DeckCounts summarises a deck's queue without starting a session, for the
 // deck list.
-func (s *Service) DeckCounts(ctx context.Context, userID, deckID int64, now time.Time) (cards.Counts, error) {
-	return s.cards.Counts(ctx, userID, deckID, now)
+func (s *Service) DeckCounts(ctx context.Context, userID, deckID int64, h cards.Horizon) (cards.Counts, error) {
+	return s.cards.Counts(ctx, userID, deckID, h)
 }

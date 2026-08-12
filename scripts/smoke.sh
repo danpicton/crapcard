@@ -61,6 +61,14 @@ echo "→ the queue is empty (204)"
 CODE=$(curl -s -o /dev/null -w '%{http_code}' -b "$COOKIES" "${BASE}/api/decks/${DECK}/study/next")
 [[ "$CODE" == "204" ]] || { echo "expected 204 after finishing, got ${CODE}"; exit 1; }
 
+echo "→ undo the last answer and the card comes back"
+UNDONE=$(api -X POST "${BASE}/api/study/undo" | json '["card_id"]')
+[[ "$UNDONE" == "$CARD" ]] || { echo "undo returned card ${UNDONE}, want ${CARD}"; exit 1; }
+NEXT=$(api "${BASE}/api/decks/${DECK}/study/next" | json '["card_id"]')
+[[ "$NEXT" == "$CARD" ]] || { echo "queue serves ${NEXT} after undo, want ${CARD}"; exit 1; }
+api -X POST "${BASE}/api/cards/${CARD}/answer" -H 'Content-Type: application/json' \
+	-d '{"rating":4}' >/dev/null
+
 echo "→ unauthenticated access is refused"
 CODE=$(curl -s -o /dev/null -w '%{http_code}' "${BASE}/api/decks")
 [[ "$CODE" == "401" ]] || { echo "expected 401 without a session, got ${CODE}"; exit 1; }

@@ -51,9 +51,13 @@ func (h *Handler) Register(mux *http.ServeMux, requireAuth Middleware) {
 // should not have to know a type's field order, and the order it is stored in
 // comes from the note type itself.
 type noteRequest struct {
-	DeckID   int64             `json:"deck_id"`
-	Type     string            `json:"type"`
-	Reversed bool              `json:"reversed"`
+	DeckID int64  `json:"deck_id"`
+	Type   string `json:"type"`
+	// Reversed is a pointer so an update that omits the key keeps the note's
+	// existing setting. Decoding it as a plain bool would read "omitted" as
+	// false — and flipping reversed off deletes the reverse card along with
+	// its entire review history.
+	Reversed *bool             `json:"reversed"`
 	Fields   map[string]string `json:"fields"`
 }
 
@@ -133,7 +137,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	n, err := h.repo.Create(r.Context(), u.ID, CreateInput{
 		DeckID: req.DeckID,
 		Type:   NoteType(req.Type),
-		Config: Config{Reversed: req.Reversed},
+		Config: Config{Reversed: req.Reversed != nil && *req.Reversed},
 		Fields: fieldsInTypeOrder(gen, req.Fields),
 	})
 	if err != nil {
@@ -284,10 +288,14 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	if req.DeckID == 0 {
 		req.DeckID = existing.DeckID
 	}
+	reversed := existing.Config.Reversed
+	if req.Reversed != nil {
+		reversed = *req.Reversed
+	}
 
 	n, err := h.repo.Update(r.Context(), u.ID, id, UpdateInput{
 		DeckID: req.DeckID,
-		Config: Config{Reversed: req.Reversed},
+		Config: Config{Reversed: reversed},
 		Fields: fieldsInTypeOrder(gen, req.Fields),
 	})
 	if err != nil {

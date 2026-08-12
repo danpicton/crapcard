@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/danpicton/crapcard/internal/auth"
@@ -37,6 +38,39 @@ func (h *Handler) Register(mux *http.ServeMux, requireAuth Middleware) {
 	mux.Handle("GET /api/decks/{id}/study/next", requireAuth(http.HandlerFunc(h.Next)))
 	mux.Handle("GET /api/decks/{id}/study/counts", requireAuth(http.HandlerFunc(h.Counts)))
 	mux.Handle("POST /api/cards/{id}/answer", requireAuth(http.HandlerFunc(h.Answer)))
+	mux.Handle("POST /api/study/undo", requireAuth(http.HandlerFunc(h.Undo)))
+}
+
+// Undo handles POST /api/study/undo: revert the most recent answer and hand
+// the card back so it can be graded again. 204 when there is nothing to undo
+// — that is the state a fresh session starts in, not an error.
+func (h *Handler) Undo(w http.ResponseWriter, r *http.Request) {
+	u := auth.UserFromContext(r.Context())
+
+	q, err := h.svc.Undo(r.Context(), u.ID, h.horizon(r))
+	if errors.Is(err, cards.ErrNothingToUndo) {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if err != nil {
+		writeStudyError(w, err)
+		return
+	}
+	writeQuestion(w, q)
+}
+
+// horizon builds the study horizon from the request's tz_offset parameter —
+// the client's minutes east of UTC, so review cards can be gated on the end
+// of the user's own calendar day. A missing or malformed value falls back to
+// UTC days, which is still day-granularity, just with a shifted boundary.
+func (h *Handler) horizon(r *http.Request) cards.Horizon {
+	offset := 0
+	if raw := r.URL.Query().Get("tz_offset"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil {
+			offset = n
+		}
+	}
+	return cards.HorizonAt(h.now(), offset)
 }
 
 // Next handles GET /api/decks/{id}/study/next.
@@ -51,7 +85,7 @@ func (h *Handler) Next(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	q, err := h.svc.Next(r.Context(), u.ID, deckID, h.now())
+	q, err := h.svc.Next(r.Context(), u.ID, deckID, h.horizon(r))
 	if errors.Is(err, ErrQueueEmpty) {
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -69,7 +103,7 @@ func (h *Handler) Next(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) NextAnywhere(w http.ResponseWriter, r *http.Request) {
 	u := auth.UserFromContext(r.Context())
 
-	q, err := h.svc.NextAnywhere(r.Context(), u.ID, h.now())
+	q, err := h.svc.NextAnywhere(r.Context(), u.ID, h.horizon(r))
 	if errors.Is(err, ErrQueueEmpty) {
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -115,7 +149,7 @@ func (h *Handler) Counts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	counts, err := h.svc.DeckCounts(r.Context(), u.ID, deckID, h.now())
+	counts, err := h.svc.DeckCounts(r.Context(), u.ID, deckID, h.horizon(r))
 	if err != nil {
 		writeStudyError(w, err)
 		return
@@ -145,7 +179,7 @@ func (h *Handler) Answer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, err := h.svc.Answer(r.Context(), u.ID, cardID, rating, h.now())
+	res, err := h.svc.Answer(r.Context(), u.ID, cardID, rating, h.horizon(r))
 	if err != nil {
 		writeStudyError(w, err)
 		return
@@ -175,6 +209,10 @@ func writeStudyError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, cards.ErrNotFound), errors.Is(err, notes.ErrNotFound):
 		httpx.WriteError(w, http.StatusNotFound, "card not found")
+	case errors.Is(err, cards.ErrStaleReview):
+		httpx.WriteError(w, http.StatusConflict, "this card was already answered")
+	case errors.Is(err, ErrCardSuspended):
+		httpx.WriteError(w, http.StatusConflict, "this card is suspended")
 	case errors.Is(err, ErrQueueEmpty):
 		w.WriteHeader(http.StatusNoContent)
 	default:

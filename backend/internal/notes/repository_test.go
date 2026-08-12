@@ -370,7 +370,7 @@ func TestNoteReportsWhenItWasLastStudied(t *testing.T) {
 	sched := srs.NewScheduler(srs.DefaultParams())
 	reviewedAt := time.Now().UTC().Truncate(time.Second)
 	res := sched.Review(list[0].State, reviewedAt, srs.RatingGood)
-	if err := e.cards.ApplyReview(ctx, e.user, list[0].ID, res.Card, res.Log); err != nil {
+	if err := e.cards.ApplyReview(ctx, e.user, list[0].ID, list[0].State, res.Card, res.Log); err != nil {
 		t.Fatalf("ApplyReview: %v", err)
 	}
 
@@ -403,11 +403,11 @@ func TestLastStudiedIsTheMostRecentOfANotesCards(t *testing.T) {
 	newer := time.Now().UTC().Truncate(time.Second)
 
 	first := sched.Review(list[0].State, older, srs.RatingGood)
-	if err := e.cards.ApplyReview(ctx, e.user, list[0].ID, first.Card, first.Log); err != nil {
+	if err := e.cards.ApplyReview(ctx, e.user, list[0].ID, list[0].State, first.Card, first.Log); err != nil {
 		t.Fatalf("ApplyReview: %v", err)
 	}
 	second := sched.Review(list[1].State, newer, srs.RatingGood)
-	if err := e.cards.ApplyReview(ctx, e.user, list[1].ID, second.Card, second.Log); err != nil {
+	if err := e.cards.ApplyReview(ctx, e.user, list[1].ID, list[1].State, second.Card, second.Log); err != nil {
 		t.Fatalf("ApplyReview: %v", err)
 	}
 
@@ -428,7 +428,7 @@ func TestListCarriesLastStudied(t *testing.T) {
 	list, _ := e.cards.ListForNote(ctx, e.user, n.ID)
 	sched := srs.NewScheduler(srs.DefaultParams())
 	res := sched.Review(list[0].State, time.Now(), srs.RatingGood)
-	if err := e.cards.ApplyReview(ctx, e.user, list[0].ID, res.Card, res.Log); err != nil {
+	if err := e.cards.ApplyReview(ctx, e.user, list[0].ID, list[0].State, res.Card, res.Log); err != nil {
 		t.Fatalf("ApplyReview: %v", err)
 	}
 
