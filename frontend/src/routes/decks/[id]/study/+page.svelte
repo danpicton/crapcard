@@ -80,7 +80,7 @@
 				{session.reviewed === 1 ? 'card' : 'cards'}.
 			{/if}
 		</p>
-		<a class="primary button" href="/">Back to decks</a>
+		<a class="primary button" href="/decks">Back to decks</a>
 	</div>
 {:else if session.card}
 	<!-- Keyed on the card so the editor remounts with new content: Milkdown

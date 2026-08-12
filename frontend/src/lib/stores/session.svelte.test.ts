@@ -7,6 +7,7 @@ function card(overrides: Partial<StudyCard> = {}): StudyCard {
 		card_id: 1,
 		note_id: 1,
 		deck_id: 1,
+		deck_name: 'Italian',
 		template: 'forward',
 		question: 'ciao',
 		answer: 'hello',

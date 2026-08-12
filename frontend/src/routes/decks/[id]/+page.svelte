@@ -2,15 +2,32 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { api, type Deck, type Note, type QueueCounts } from '$lib/api';
+	import { prefs } from '$lib/stores/prefs.svelte';
+	import { summariseMarkdown, pageSizeOptionsFor } from '$lib/noteSummary';
 	import Editor from '$lib/components/Editor.svelte';
+	import BidirectionalIcon from '$lib/components/BidirectionalIcon.svelte';
+	import CardPreviewModal from '$lib/components/CardPreviewModal.svelte';
 
 	const deckId = Number(page.params.id);
 
 	let deck = $state<Deck | null>(null);
 	let notes = $state<Note[]>([]);
+	let total = $state(0);
+	let offset = $state(0);
 	let counts = $state<QueueCounts | null>(null);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
+
+	// Which note the preview modal is showing, if any.
+	let previewNoteId = $state<number | null>(null);
+
+	// The page size in force: the deck header's selector overrides the user's
+	// setting, which overrides the deployment default.
+	let pageSizeOverride = $state<number | null>(null);
+	const pageSize = $derived(pageSizeOverride ?? prefs.pageSize);
+	const pageCount = $derived(Math.max(1, Math.ceil(total / pageSize)));
+	const currentPage = $derived(Math.floor(offset / pageSize) + 1);
+	const pageSizeOptions = $derived(pageSizeOptionsFor(pageSize));
 
 	// Composer state. `editingId` is null when authoring a new note.
 	let composing = $state(false);
@@ -24,11 +41,22 @@
 		loading = true;
 		error = null;
 		try {
-			[deck, notes, counts] = await Promise.all([
+			const [loadedDeck, page, loadedCounts] = await Promise.all([
 				api.getDeck(deckId),
-				api.listNotes(deckId),
+				api.listNotes({ deckId, limit: pageSize, offset }),
 				api.deckCounts(deckId).catch(() => null),
 			]);
+			deck = loadedDeck;
+			notes = page.items;
+			total = page.total;
+			counts = loadedCounts;
+
+			// A deletion can empty the last page; step back rather than
+			// showing an empty list under a pager that says there is more.
+			if (notes.length === 0 && offset > 0) {
+				offset = Math.max(0, offset - pageSize);
+				await load();
+			}
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'could not load the deck';
 		} finally {
@@ -37,6 +65,34 @@
 	}
 
 	onMount(load);
+
+	function goToPage(next: number) {
+		const bounded = Math.min(Math.max(next, 1), pageCount);
+		offset = (bounded - 1) * pageSize;
+		void load();
+	}
+
+	function setPageSize(size: number) {
+		pageSizeOverride = size;
+		offset = 0;
+		void load();
+	}
+
+	/** "3 days ago", or null when the note has never been answered. */
+	function lastStudiedLabel(value: string | null): string | null {
+		if (!value) return null;
+		const then = new Date(value);
+		if (Number.isNaN(then.getTime())) return null;
+
+		const seconds = Math.max(0, (Date.now() - then.getTime()) / 1000);
+		if (seconds < 60) return 'just now';
+		if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+		if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+		const days = Math.floor(seconds / 86400);
+		if (days < 30) return `${days}d ago`;
+		if (days < 365) return `${Math.floor(days / 30)}mo ago`;
+		return `${Math.floor(days / 365)}y ago`;
+	}
 
 	function startNew() {
 		editingId = null;
@@ -71,6 +127,9 @@
 			const fields = { front, back };
 			if (editingId === null) {
 				await api.createNote({ deck_id: deckId, type: 'basic', reversed, fields });
+				// The list is newest first, so a new card lands on page one.
+				// Staying put would save it out of sight.
+				offset = 0;
 			} else {
 				await api.updateNote(editingId, { deck_id: deckId, reversed, fields });
 			}
@@ -94,14 +153,9 @@
 		}
 	}
 
-	/** First line of a field, for the list summary. Markdown is left as-is. */
-	function summarise(value: string): string {
-		const line = value.split('\n').find((l) => l.trim() !== '') ?? '';
-		return line.length > 80 ? `${line.slice(0, 80)}…` : line;
-	}
 </script>
 
-<a class="back" href="/">← All decks</a>
+<a class="back" href="/decks">← All decks</a>
 
 {#if loading}
 	<p class="muted">Loading…</p>
@@ -155,9 +209,10 @@
 
 			<label class="checkbox">
 				<input type="checkbox" bind:checked={reversed} />
-				<span>
-					Also test back → front
-					<small class="muted">Adds a second card, scheduled independently.</small>
+				<span class="checkbox-label">
+					<BidirectionalIcon />
+					Bidirectional
+					<small class="muted">Adds a second card asking the other way, scheduled independently.</small>
 				</span>
 			</label>
 
@@ -165,12 +220,42 @@
 				<button type="button" class="primary" disabled={saving} onclick={save}>
 					{saving ? 'Saving…' : 'Save'}
 				</button>
+				{#if editingId !== null}
+					<button type="button" class="secondary" onclick={() => (previewNoteId = editingId)}>
+						Preview
+					</button>
+				{/if}
 				<button type="button" class="link" onclick={cancel}>Cancel</button>
 			</div>
+			{#if editingId === null}
+				<p class="muted small hint">Save the card to preview how it will be asked.</p>
+			{/if}
 		</section>
 	{/if}
 
-	<h2 class="list-heading">{notes.length} {notes.length === 1 ? 'card' : 'cards'}</h2>
+	<div class="list-head">
+		<h2 class="list-heading">
+			{total}
+			{total === 1 ? 'card' : 'cards'}
+			{#if total > pageSize}
+				<span class="muted small">
+					· showing {offset + 1}–{Math.min(offset + notes.length, total)}
+				</span>
+			{/if}
+		</h2>
+
+		<label class="page-size muted small">
+			Per page
+			<select
+				value={pageSize}
+				onchange={(e) => setPageSize(Number((e.target as HTMLSelectElement).value))}
+			>
+				{#each pageSizeOptions as size (size)}
+					<option value={size}>{size}</option>
+				{/each}
+			</select>
+		</label>
+	</div>
 
 	{#if notes.length === 0}
 		<p class="muted">No cards yet.</p>
@@ -179,11 +264,21 @@
 			{#each notes as note (note.id)}
 				<li class="note">
 					<div class="note-text">
-						<p class="note-front">{summarise(note.fields.front ?? '')}</p>
-						<p class="note-back muted small">{summarise(note.fields.back ?? '')}</p>
+						<p class="note-front">{summariseMarkdown(note.fields.front ?? '')}</p>
+						<p class="note-back muted small">{summariseMarkdown(note.fields.back ?? '')}</p>
+						<p class="note-meta muted small">
+							{#if lastStudiedLabel(note.last_studied)}
+								Studied {lastStudiedLabel(note.last_studied)}
+							{:else}
+								Never studied
+							{/if}
+						</p>
 					</div>
 					<div class="note-actions">
-						{#if note.reversed}<span class="pill">both ways</span>{/if}
+						{#if note.reversed}<BidirectionalIcon />{/if}
+						<button type="button" class="link" onclick={() => (previewNoteId = note.id)}>
+							Preview
+						</button>
 						<button type="button" class="link" onclick={() => startEdit(note)}>Edit</button>
 						<button type="button" class="link danger" onclick={() => remove(note)}>
 							Delete
@@ -192,7 +287,33 @@
 				</li>
 			{/each}
 		</ul>
+
+		{#if pageCount > 1}
+			<nav class="pager" aria-label="Card list pages">
+				<button
+					type="button"
+					class="secondary"
+					disabled={currentPage <= 1}
+					onclick={() => goToPage(currentPage - 1)}
+				>
+					← Previous
+				</button>
+				<span class="muted small">Page {currentPage} of {pageCount}</span>
+				<button
+					type="button"
+					class="secondary"
+					disabled={currentPage >= pageCount}
+					onclick={() => goToPage(currentPage + 1)}
+				>
+					Next →
+				</button>
+			</nav>
+		{/if}
 	{/if}
+{/if}
+
+{#if previewNoteId !== null}
+	<CardPreviewModal noteId={previewNoteId} onclose={() => (previewNoteId = null)} />
 {/if}
 
 <style>
@@ -223,8 +344,8 @@
 	}
 
 	.list-heading {
-		margin-top: 2rem;
 		color: var(--text-2);
+		margin: 0;
 	}
 
 	.head-actions {
@@ -296,6 +417,59 @@
 		background: var(--bg-alt);
 	}
 
+	.list-head {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 1rem;
+		margin-top: 2rem;
+	}
+
+	.page-size {
+		display: flex;
+		align-items: center;
+		gap: 0.375rem;
+	}
+
+	.page-size select {
+		font: inherit;
+		font-size: 0.8125rem;
+		padding: 0.2rem 0.4rem;
+		border: 1px solid var(--border);
+		border-radius: 4px;
+		background: var(--bg);
+		color: var(--text);
+	}
+
+	.pager {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 1rem;
+		margin-top: 1.25rem;
+	}
+
+	.pager button:disabled {
+		opacity: 0.45;
+		cursor: default;
+	}
+
+	.checkbox-label {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 0.375rem;
+	}
+
+	.hint {
+		margin: 0.5rem 0 0;
+	}
+
+	.note-meta {
+		margin: 0.375rem 0 0;
+		font-size: 0.75rem;
+	}
+
 	.note-front {
 		margin: 0;
 		font-weight: 500;
@@ -310,14 +484,6 @@
 		align-items: center;
 		gap: 0.625rem;
 		flex-shrink: 0;
-	}
-
-	.pill {
-		font-size: 0.6875rem;
-		padding: 0.125rem 0.4rem;
-		border-radius: 999px;
-		background: var(--bg-hover);
-		color: var(--text-3);
 	}
 
 	.primary,

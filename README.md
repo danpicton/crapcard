@@ -20,14 +20,21 @@ the two apps look and feel like siblings.
 
 - **Two-sided text/image cards.** Front and back are markdown, edited in
   Milkdown.
-- **Reversal.** One note optionally produces a second card testing back → front,
-  scheduled independently of the first.
+- **Bidirectional notes.** One note optionally produces a second card testing
+  the other way, scheduled independently of the first.
 - **Paste images straight in.** A screenshot on the clipboard uploads and embeds
-  itself in the card.
-- **Decks.** A note belongs to one deck; study sessions are per-deck.
+  itself in the card. Drag the corner to resize it (double-click the handle to
+  restore its natural size), and describe it in the alt-text box that appears
+  on hover.
+- **Preview.** See every card a note produces, exactly as review will ask them.
+  Images show as `*image:* "alt text"`, so an undescribed one is obvious.
+- **Decks.** A note belongs to one deck; study sessions are per-deck, with a
+  paginated card list.
 - **FSRS scheduling.** Each answer feeds the algorithm; the four answer buttons
   are labelled with the interval each would produce.
 - **Keyboard review.** Space reveals, 1–4 grade.
+- **Signing in lands on a card.** The next thing due, from the deck you were
+  last working through.
 - **Multi-user.** Sessions, per-user scoping on every query.
 
 ### Not yet
@@ -85,6 +92,11 @@ deal in cards and an opaque template string.
 Adding cloze therefore means registering another `Generator` in
 `internal/notes/notetype.go`, which produces `cloze:1`, `cloze:2`, … templates
 from a single text field. Nothing in `study`, `srs` or `cards` changes.
+
+Image sizing rides in the image URL as `?w=<pixels>` rather than in markdown
+syntax or an HTML tag. That keeps a card plain CommonMark — any other renderer
+still shows the image, alt text stays real alt text, and no user-authored HTML
+is ever rendered from our own origin. The server ignores the parameter.
 
 Three schema decisions exist to support that:
 
@@ -151,6 +163,7 @@ docker run -p 8080:8080 -v crapcard-data:/data crapcard
 |---|---|---|
 | `CRAPCARD_ADDR` | `:8080` | Listen address |
 | `CRAPCARD_DB_PATH` | `crapcard.db` | SQLite file (`/data/crapcard.db` in Docker) |
+| `CRAPCARD_PAGE_SIZE` | `50` | Default cards per page in a deck listing. Users can override it in Settings, and per deck from the list header. |
 | `TRUST_PROXY` | unset | Honour `X-Forwarded-*`. Only enable behind a proxy you control that strips inbound copies — any client can otherwise forge them. |
 
 ## Tests
@@ -180,9 +193,12 @@ All routes need a session cookie except `/healthz` and the setup/login handshake
 | `GET`/`POST` | `/api/decks` | List / create decks |
 | `GET`/`PUT`/`DELETE` | `/api/decks/{id}` | One deck |
 | `GET` | `/api/note-types` | What note types exist, and their fields |
-| `GET`/`POST` | `/api/notes` | List (`?deck_id=`) / create notes |
+| `GET`/`POST` | `/api/notes` | List (`?deck_id=`, `?limit=`, `?offset=`) / create |
 | `GET`/`PUT`/`DELETE` | `/api/notes/{id}` | One note, with its cards |
-| `GET` | `/api/decks/{id}/study/next` | Next due card, or `204` if none |
+| `GET` | `/api/config` | Deployment settings the client needs (page size) |
+| `GET` | `/api/notes/{id}/preview` | Every card the note produces, rendered |
+| `GET` | `/api/study/next` | Next due card from any deck, or `204` if none |
+| `GET` | `/api/decks/{id}/study/next` | Next due card in one deck, or `204` |
 | `GET` | `/api/decks/{id}/study/counts` | Queue counts |
 | `POST` | `/api/cards/{id}/answer` | `{"rating": 1..4}` |
 | `POST` | `/api/images` | Raw image bytes (what a paste produces) |

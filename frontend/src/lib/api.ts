@@ -47,6 +47,8 @@ export interface Note {
 	reversed: boolean;
 	fields: Record<string, string>;
 	cards?: CardSummary[];
+	/** Null when no card of this note has ever been answered. */
+	last_studied: string | null;
 	created_at: string;
 	updated_at: string;
 }
@@ -75,6 +77,7 @@ export interface StudyCard {
 	card_id: number;
 	note_id: number;
 	deck_id: number;
+	deck_name: string;
 	template: string;
 	question: string;
 	answer: string;
@@ -102,6 +105,26 @@ export interface User {
 	username: string;
 	is_admin: boolean;
 	created_at: string;
+}
+
+export interface AppConfig {
+	page_size: number;
+	max_page_size: number;
+}
+
+/** One page of notes, with the total so a pager can be drawn. */
+export interface NotePage {
+	items: Note[];
+	total: number;
+	limit: number;
+	offset: number;
+}
+
+/** One card of a note, rendered as the study screen would ask it. */
+export interface CardPreview {
+	template: string;
+	question: string;
+	answer: string;
 }
 
 export interface UploadedImage {
@@ -181,6 +204,8 @@ function postJSON<T>(path: string, body: unknown, method = 'POST'): Promise<T> {
 }
 
 export const api = {
+	config: () => request<AppConfig>('/api/config'),
+
 	// ── Auth ────────────────────────────────────────────────────────────────
 	setupStatus: () => request<{ needs_setup: boolean }>('/api/auth/setup-status'),
 	setup: (username: string, password: string) =>
@@ -201,8 +226,15 @@ export const api = {
 
 	// ── Notes ───────────────────────────────────────────────────────────────
 	noteTypes: () => request<NoteType[]>('/api/note-types'),
-	listNotes: (deckId?: number) =>
-		request<Note[]>(deckId ? `/api/notes?deck_id=${deckId}` : '/api/notes'),
+	listNotes: (opts: { deckId?: number; limit?: number; offset?: number } = {}) => {
+		const params = new URLSearchParams();
+		if (opts.deckId) params.set('deck_id', String(opts.deckId));
+		if (opts.limit) params.set('limit', String(opts.limit));
+		if (opts.offset) params.set('offset', String(opts.offset));
+		const query = params.toString();
+		return request<NotePage>(query ? `/api/notes?${query}` : '/api/notes');
+	},
+	previewNote: (id: number) => request<CardPreview[]>(`/api/notes/${id}/preview`),
 	getNote: (id: number) => request<Note>(`/api/notes/${id}`),
 	createNote: (input: NoteInput) => postJSON<Note>('/api/notes', input),
 	updateNote: (id: number, input: Omit<NoteInput, 'type'>) =>
@@ -212,6 +244,11 @@ export const api = {
 	// ── Study ───────────────────────────────────────────────────────────────
 	/** Returns null when nothing is due (the server answers 204). */
 	nextCard: (deckId: number) => request<StudyCard | null>(`/api/decks/${deckId}/study/next`),
+	/**
+	 * The next due card without naming a deck — the landing screen's call.
+	 * Null when nothing is due anywhere.
+	 */
+	nextCardAnywhere: () => request<StudyCard | null>('/api/study/next'),
 	deckCounts: (deckId: number) => request<QueueCounts>(`/api/decks/${deckId}/study/counts`),
 	answerCard: (cardId: number, rating: RatingValue | number) =>
 		postJSON<AnswerResult>(`/api/cards/${cardId}/answer`, { rating }),

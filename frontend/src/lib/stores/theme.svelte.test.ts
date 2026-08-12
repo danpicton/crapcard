@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { theme, THEMES, type ThemeId } from './theme.svelte';
+import { theme, THEMES, DEFAULT_THEME, type ThemeId } from './theme.svelte';
 
 const STORAGE_KEY = 'crapcard-theme';
 
@@ -26,13 +26,14 @@ describe('theme store', () => {
 		]);
 	});
 
-	it('defaults to the light theme when nothing is stored', () => {
+	it('defaults to Verdana when nothing is stored', () => {
 		theme.init();
-		expect(theme.current).toBe('light');
-		expect(document.documentElement.getAttribute('data-theme')).toBe('light');
+		expect(theme.current).toBe(DEFAULT_THEME);
+		expect(theme.current).toBe('verdana');
+		expect(document.documentElement.getAttribute('data-theme')).toBe('verdana');
 	});
 
-	it('restores the theme chosen on this device', () => {
+	it('a stored choice still wins over the default', () => {
 		localStorage.setItem(STORAGE_KEY, 'rosso');
 		theme.init();
 		expect(theme.current).toBe('rosso');
@@ -43,7 +44,7 @@ describe('theme store', () => {
 		// A stale or hand-edited value must not leave the app unstyled.
 		localStorage.setItem(STORAGE_KEY, 'not-a-theme');
 		theme.init();
-		expect(theme.current).toBe('light');
+		expect(theme.current).toBe(DEFAULT_THEME);
 	});
 
 	it('applies and persists a theme when set', () => {
@@ -58,7 +59,7 @@ describe('theme store', () => {
 	it('refuses to set a theme that does not exist', () => {
 		theme.init();
 		theme.set('nonsense' as ThemeId);
-		expect(theme.current).toBe('light');
+		expect(theme.current).toBe(DEFAULT_THEME);
 	});
 
 	it('keeps the browser chrome colour in step with the theme', () => {

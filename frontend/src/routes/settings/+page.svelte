@@ -1,5 +1,7 @@
 <script lang="ts">
-	import { theme, THEMES } from '$lib/stores/theme.svelte';
+	import { theme, THEMES, type ThemeId } from '$lib/stores/theme.svelte';
+	import { prefs } from '$lib/stores/prefs.svelte';
+	import { pageSizeOptionsFor } from '$lib/noteSummary';
 	import { auth } from '$lib/stores/auth.svelte';
 </script>
 
@@ -15,18 +17,43 @@
 		The same themes as crapnote. Your choice is remembered on this device.
 	</p>
 
-	<div class="themes">
-		{#each THEMES as option (option.id)}
-			<button
-				type="button"
-				class="theme"
-				class:selected={theme.current === option.id}
-				onclick={() => theme.set(option.id)}
-			>
-				{option.label}
-			</button>
-		{/each}
-	</div>
+	<label class="setting">
+		<span class="setting-label">Theme</span>
+		<select
+			value={theme.current}
+			onchange={(e) => theme.set((e.target as HTMLSelectElement).value as ThemeId)}
+		>
+			{#each THEMES as option (option.id)}
+				<option value={option.id}>{option.label}</option>
+			{/each}
+		</select>
+	</label>
+</section>
+
+<section>
+	<h2>Card lists</h2>
+	<p class="muted small">
+		How many cards a deck shows per page. A deck's own selector overrides this
+		for that deck; leaving it on the default follows whatever the server is
+		configured with.
+	</p>
+
+	<label class="setting">
+		<span class="setting-label">Cards per page</span>
+		<select
+			value={prefs.isOverridden ? prefs.pageSize : 'default'}
+			onchange={(e) => {
+				const value = (e.target as HTMLSelectElement).value;
+				if (value === 'default') prefs.clearPageSize();
+				else prefs.setPageSize(Number(value));
+			}}
+		>
+			<option value="default">Server default ({prefs.deploymentPageSize})</option>
+			{#each pageSizeOptionsFor(prefs.pageSize) as size (size)}
+				<option value={size}>{size}</option>
+			{/each}
+		</select>
+	</label>
 </section>
 
 <style>
@@ -46,32 +73,33 @@
 		margin-top: 2rem;
 	}
 
-	.themes {
+	.setting {
 		display: flex;
-		flex-wrap: wrap;
-		gap: 0.5rem;
+		align-items: center;
+		gap: 0.75rem;
 		margin-top: 0.875rem;
 	}
 
-	.theme {
+	.setting-label {
+		font-size: 0.8125rem;
+		color: var(--text-2);
+		min-width: 8rem;
+	}
+
+	select {
 		font: inherit;
 		font-size: 0.875rem;
-		padding: 0.4rem 0.9rem;
+		padding: 0.35rem 0.6rem;
 		border: 1px solid var(--border-md);
 		border-radius: 4px;
 		background: var(--bg-alt);
 		color: var(--text);
 		cursor: pointer;
+		min-width: 14rem;
 	}
 
-	.theme:hover {
+	select:hover {
 		background: var(--bg-hover);
-	}
-
-	.theme.selected {
-		border-color: var(--accent);
-		color: var(--accent-tx);
-		font-weight: 600;
 	}
 
 	.muted {

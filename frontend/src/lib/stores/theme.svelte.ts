@@ -26,8 +26,14 @@ function isThemeId(value: unknown): value is ThemeId {
 	return THEMES.some((t) => t.id === value);
 }
 
+/**
+ * The theme a new install starts on. Verdana is the default rather than the
+ * Claude theme; a device with no stored preference gets this one.
+ */
+export const DEFAULT_THEME: ThemeId = 'verdana';
+
 function createThemeStore() {
-	let current = $state<ThemeId>('light');
+	let current = $state<ThemeId>(DEFAULT_THEME);
 
 	function applyToDOM(t: ThemeId) {
 		document.documentElement.setAttribute('data-theme', t);
@@ -59,7 +65,7 @@ function createThemeStore() {
 		/** Resolve and apply the stored theme. Call once, on mount. */
 		init() {
 			const stored = localStorage.getItem(STORAGE_KEY);
-			current = isThemeId(stored) ? stored : 'light';
+			current = isThemeId(stored) ? stored : DEFAULT_THEME;
 			applyToDOM(current);
 		},
 

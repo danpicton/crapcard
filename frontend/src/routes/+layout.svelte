@@ -4,6 +4,7 @@
 	import { page } from '$app/state';
 	import { theme } from '$lib/stores/theme.svelte';
 	import { auth } from '$lib/stores/auth.svelte';
+	import { prefs } from '$lib/stores/prefs.svelte';
 	import { api } from '$lib/api';
 
 	let { children } = $props();
@@ -16,6 +17,7 @@
 	onMount(async () => {
 		theme.init();
 		await auth.refresh();
+		if (auth.signedIn) await prefs.load();
 
 		if (!auth.signedIn && !publicRoutes.includes(page.url.pathname)) {
 			// A brand new instance should land on setup, not on a login form
@@ -42,7 +44,8 @@
 
 		{#if auth.signedIn}
 			<nav>
-				<a href="/" class:active={page.url.pathname === '/'}>Decks</a>
+				<a href="/" class:active={page.url.pathname === '/'}>Study</a>
+				<a href="/decks" class:active={page.url.pathname.startsWith('/decks')}>Decks</a>
 				<a href="/settings" class:active={page.url.pathname === '/settings'}>Settings</a>
 				<button type="button" class="link" onclick={signOut}>Sign out</button>
 			</nav>
