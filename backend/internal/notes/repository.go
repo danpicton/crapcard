@@ -46,9 +46,12 @@ type CreateInput struct {
 }
 
 // UpdateInput is the content of an edit. DeckID may differ from the note's
-// current deck, which moves it.
+// current deck, which moves it. Type may differ too — adding a cloze to a
+// basic note converts it in place — and the zero value keeps the current
+// type. Cards whose template survives the change keep their scheduling.
 type UpdateInput struct {
 	DeckID int64
+	Type   NoteType
 	Config Config
 	Fields []Field
 }
@@ -134,7 +137,11 @@ func (r *Repository) Update(ctx context.Context, userID, noteID int64, in Update
 		return nil, err
 	}
 
-	gen, err := GeneratorFor(existing.Type)
+	newType := in.Type
+	if newType == "" {
+		newType = existing.Type
+	}
+	gen, err := GeneratorFor(newType)
 	if err != nil {
 		return nil, err
 	}
@@ -159,9 +166,9 @@ func (r *Repository) Update(ctx context.Context, userID, noteID int64, in Update
 	}
 
 	res, err := tx.ExecContext(ctx,
-		`UPDATE notes SET deck_id=?, config=?, updated_at=CURRENT_TIMESTAMP
+		`UPDATE notes SET deck_id=?, note_type=?, config=?, updated_at=CURRENT_TIMESTAMP
 		 WHERE id=? AND user_id=?`,
-		in.DeckID, string(cfg), noteID, userID,
+		in.DeckID, string(newType), string(cfg), noteID, userID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("update note: %w", err)
