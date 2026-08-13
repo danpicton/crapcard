@@ -22,6 +22,16 @@ the two apps look and feel like siblings.
   Milkdown.
 - **Bidirectional notes.** One note optionally produces a second card testing
   the other way, scheduled independently of the first.
+- **Cloze deletion, invisibly.** Select text and press Alt+C (or the Cloze
+  button) to blank it out with Anki's `{{c1::answer}}` / `{{c1::answer::hint}}`
+  syntax — one card per deletion number, each scheduled independently. There is
+  no note type to pick: a basic note that gains a deletion becomes a cloze
+  note, and becomes basic again when the last one goes. The back turns into
+  optional extra context shown with the answer.
+- **Image cloze.** Select an image and press Alt+C to drag masks over the
+  areas to test — one card per mask. Per note, choose whether a card covers
+  only its own mask or every mask (for diagrams where neighbouring labels give
+  the answer away).
 - **Paste images straight in.** A screenshot on the clipboard uploads and embeds
   itself in the card. Drag the corner to resize it (double-click the handle to
   restore its natural size), and describe it in the alt-text box that appears

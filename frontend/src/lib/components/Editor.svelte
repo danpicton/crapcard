@@ -1,12 +1,19 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { Editor, rootCtx, defaultValueCtx, editorViewOptionsCtx } from '@milkdown/kit/core';
+	import {
+		Editor,
+		rootCtx,
+		defaultValueCtx,
+		editorViewCtx,
+		editorViewOptionsCtx,
+	} from '@milkdown/kit/core';
 	import { commonmark } from '@milkdown/kit/preset/commonmark';
 	import { gfm } from '@milkdown/kit/preset/gfm';
 	import { history } from '@milkdown/kit/plugin/history';
 	import { listener, listenerCtx } from '@milkdown/kit/plugin/listener';
 	import { createImagePastePlugin } from '$lib/milkdown/imagePlugin';
 	import { imageView } from '$lib/milkdown/imageView';
+	import { createClozePlugin, performCloze } from '$lib/milkdown/clozeCommand';
 
 	interface Props {
 		/** Markdown content. Bindable so the parent can read what was typed. */
@@ -15,6 +22,11 @@
 		readonly?: boolean;
 		/** Reported when a pasted image fails to upload. */
 		onerror?: (message: string) => void;
+		/**
+		 * Called when the cloze command lands on a selected image — clozing an
+		 * image means masking areas of it, which is the parent's modal to open.
+		 */
+		onmaskrequest?: (src: string) => void;
 	}
 
 	let {
@@ -22,7 +34,18 @@
 		placeholder = '',
 		readonly = false,
 		onerror = () => {},
+		onmaskrequest,
 	}: Props = $props();
+
+	/**
+	 * Runs the cloze command — same routine Alt+C triggers — so a toolbar
+	 * button outside this component behaves identically to the shortcut.
+	 */
+	export function cloze() {
+		editor?.action((ctx) => {
+			performCloze(ctx.get(editorViewCtx), onmaskrequest);
+		});
+	}
 
 	let host = $state<HTMLDivElement | null>(null);
 	let editor: Editor | null = null;
@@ -57,6 +80,7 @@
 			.use(history)
 			.use(listener)
 			.use(createImagePastePlugin(undefined, onerror))
+			.use(createClozePlugin(onmaskrequest))
 			.use(imageView)
 			.create();
 	});
@@ -178,6 +202,34 @@
 	.editor.readonly :global(.crapcard-img-toolbar),
 	.editor.readonly :global(.crapcard-img-handle) {
 		display: none;
+	}
+
+	/* ── Image cloze masks ────────────────────────────────────────────── */
+	/* Percent-positioned over the image, from the rectangles the server
+	   carries in the URL's #occ= fragment. */
+
+	.editor :global(.crapcard-occ-mask) {
+		position: absolute;
+		box-sizing: border-box;
+		border-radius: 3px;
+		pointer-events: none;
+	}
+
+	/* A covered area: opaque, so it genuinely hides what is under it. */
+	.editor :global(.crapcard-occ-covered),
+	.editor :global(.crapcard-occ-covered-tested) {
+		background: var(--accent);
+	}
+
+	/* The mask being asked about, when others are covered too. */
+	.editor :global(.crapcard-occ-covered-tested) {
+		border: 2px dashed color-mix(in srgb, var(--bg) 85%, transparent);
+	}
+
+	/* On the answer the tested area is revealed, just pointed at. */
+	.editor :global(.crapcard-occ-outline) {
+		border: 2px solid var(--accent);
+		background: color-mix(in srgb, var(--accent) 18%, transparent);
 	}
 
 	/* Placeholder for an empty first paragraph. */

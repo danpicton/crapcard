@@ -7,6 +7,9 @@
  * as a bare TypeError.
  */
 
+import type { Occlusion } from './cloze';
+export type { Occlusion, OcclusionRect } from './cloze';
+
 export class ApiError extends Error {
 	readonly status: number;
 
@@ -45,6 +48,8 @@ export interface Note {
 	deck_id: number;
 	type: string;
 	reversed: boolean;
+	/** Mask set of an image-cloze note; null for every other type. */
+	occlusion: Occlusion | null;
 	fields: Record<string, string>;
 	cards?: CardSummary[];
 	/** Null when no card of this note has ever been answered. */
@@ -57,6 +62,8 @@ export interface NoteInput {
 	deck_id: number;
 	type: string;
 	reversed: boolean;
+	/** Omitted keeps the note's masks; present replaces them. */
+	occlusion?: Occlusion | null;
 	fields: Record<string, string>;
 }
 
@@ -261,8 +268,9 @@ export const api = {
 	previewNote: (id: number) => request<CardPreview[]>(`/api/notes/${id}/preview`),
 	getNote: (id: number) => request<Note>(`/api/notes/${id}`),
 	createNote: (input: NoteInput) => postJSON<Note>('/api/notes', input),
-	updateNote: (id: number, input: Omit<NoteInput, 'type'>) =>
-		postJSON<Note>(`/api/notes/${id}`, input, 'PUT'),
+	// Updates carry the type too: it is re-detected from the note's content
+	// on every save, so adding a cloze converts the note in place.
+	updateNote: (id: number, input: NoteInput) => postJSON<Note>(`/api/notes/${id}`, input, 'PUT'),
 	deleteNote: (id: number) => request<null>(`/api/notes/${id}`, { method: 'DELETE' }),
 
 	// ── Study ───────────────────────────────────────────────────────────────

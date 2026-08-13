@@ -1,13 +1,16 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
 	import { page } from '$app/state';
-	import { api, ApiError, type Deck, type Note, type QueueCounts } from '$lib/api';
+	import { api, ApiError, type Deck, type Note, type Occlusion, type QueueCounts } from '$lib/api';
 	import { prefs } from '$lib/stores/prefs.svelte';
 	import { sync } from '$lib/stores/sync.svelte';
 	import { summariseMarkdown, pageSizeOptionsFor } from '$lib/noteSummary';
+	import { detectNoteType, srcWithoutOcclusion } from '$lib/cloze';
 	import Editor from '$lib/components/Editor.svelte';
 	import BidirectionalIcon from '$lib/components/BidirectionalIcon.svelte';
+	import ClozeIcon from '$lib/components/ClozeIcon.svelte';
 	import CardPreviewModal from '$lib/components/CardPreviewModal.svelte';
+	import MaskEditorModal from '$lib/components/MaskEditorModal.svelte';
 
 	const deckId = Number(page.params.id);
 
@@ -36,6 +39,17 @@
 	let front = $state('');
 	let back = $state('');
 	let reversed = $state(false);
+	// Masks over the front's image, when the note is an image cloze.
+	let occlusion = $state<Occlusion | null>(null);
+	// The image the mask editor is open on, or null when it is closed.
+	let maskSrc = $state<string | null>(null);
+	// The front editor, so the Cloze button can run the same command as Alt+C.
+	let frontEditor = $state<ReturnType<typeof Editor> | null>(null);
+
+	// The note's type is never picked: it follows from what the note contains,
+	// re-detected on every save. Adding a {{c1::…}} or masking an image
+	// converts the note; removing them converts it back.
+	const noteType = $derived(detectNoteType(front, occlusion));
 	// What the note's reversed flag was at the last save, so switching it
 	// off can warn about the review history it would delete.
 	let wasReversed = $state(false);
@@ -50,8 +64,9 @@
 	let saveStatus = $state<SaveStatus>('idle');
 	let saveTimer: ReturnType<typeof setTimeout> | null = null;
 	// Content as of the last successful (or queued) save, to tell a real
-	// edit from the composer merely being populated.
-	let lastSaved = { front: '', back: '', reversed: false };
+	// edit from the composer merely being populated. Occlusion is compared as
+	// JSON: the mask editor hands back a fresh object every save.
+	let lastSaved = { front: '', back: '', reversed: false, occlusion: 'null' };
 	// Outbox ref for a note first created while offline, until its real id
 	// arrives from a flush.
 	let pendingCreateRef = $state<string | null>(null);
@@ -72,12 +87,13 @@
 
 	$effect(() => {
 		// Read the fields so the effect re-runs on every edit.
-		const snapshot = { front, back, reversed };
+		const snapshot = { front, back, reversed, occlusion: JSON.stringify(occlusion) };
 		if (!composing) return;
 		if (
 			snapshot.front === lastSaved.front &&
 			snapshot.back === lastSaved.back &&
-			snapshot.reversed === lastSaved.reversed
+			snapshot.reversed === lastSaved.reversed &&
+			snapshot.occlusion === lastSaved.occlusion
 		) {
 			return;
 		}
@@ -98,35 +114,38 @@
 
 	async function autosave() {
 		if (!composing) return;
-		if (!front.trim() || !back.trim()) {
+		// A cloze note is complete with just its front — the deletions (or
+		// masks) are the answers, and the back is optional extra context.
+		const complete =
+			noteType === 'basic' ? !!front.trim() && !!back.trim() : !!front.trim();
+		if (!complete) {
 			saveStatus = 'incomplete';
 			return;
 		}
 
-		const snapshot = { front, back, reversed };
-		const fields = { front: snapshot.front, back: snapshot.back };
+		const snapshot = { front, back, reversed, occlusion: JSON.stringify(occlusion) };
+		const input = {
+			deck_id: deckId,
+			type: noteType,
+			reversed: reversed,
+			// Omitted while null so an edit that never opened the mask editor
+			// cannot touch the note's masks; present — even empty — replaces
+			// them.
+			...(occlusion !== null ? { occlusion } : {}),
+			fields: { front: snapshot.front, back: snapshot.back },
+		};
 		saveStatus = 'saving';
 		try {
 			if (pendingCreateRef !== null) {
 				// Still waiting offline for the create to flush: refresh it.
-				sync.queueNoteCreate(pendingCreateRef, {
-					deck_id: deckId,
-					type: 'basic',
-					reversed: snapshot.reversed,
-					fields,
-				});
+				sync.queueNoteCreate(pendingCreateRef, input);
 				saveStatus = 'queued';
 			} else if (editingId === null) {
-				const note = await api.createNote({
-					deck_id: deckId,
-					type: 'basic',
-					reversed: snapshot.reversed,
-					fields,
-				});
+				const note = await api.createNote(input);
 				editingId = note.id;
 				saveStatus = 'saved';
 			} else {
-				await api.updateNote(editingId, { deck_id: deckId, reversed: snapshot.reversed, fields });
+				await api.updateNote(editingId, input);
 				saveStatus = 'saved';
 			}
 			lastSaved = snapshot;
@@ -136,19 +155,10 @@
 				// Offline: park the save and keep typing.
 				sync.markOffline();
 				if (editingId !== null) {
-					sync.queueNoteUpdate(editingId, {
-						deck_id: deckId,
-						reversed: snapshot.reversed,
-						fields,
-					});
+					sync.queueNoteUpdate(editingId, input);
 				} else {
 					pendingCreateRef = crypto.randomUUID();
-					sync.queueNoteCreate(pendingCreateRef, {
-						deck_id: deckId,
-						type: 'basic',
-						reversed: snapshot.reversed,
-						fields,
-					});
+					sync.queueNoteCreate(pendingCreateRef, input);
 				}
 				lastSaved = snapshot;
 				wasReversed = snapshot.reversed;
@@ -256,7 +266,9 @@
 		back = '';
 		reversed = false;
 		wasReversed = false;
-		lastSaved = { front: '', back: '', reversed: false };
+		occlusion = null;
+		maskSrc = null;
+		lastSaved = { front: '', back: '', reversed: false, occlusion: 'null' };
 		saveStatus = 'idle';
 		startedNew = true;
 		composerKey += 1;
@@ -271,12 +283,19 @@
 		back = note.fields.back ?? '';
 		reversed = note.reversed;
 		wasReversed = note.reversed;
-		lastSaved = { front, back, reversed };
+		occlusion = note.occlusion;
+		maskSrc = null;
+		lastSaved = { front, back, reversed, occlusion: JSON.stringify(occlusion) };
 		saveStatus = 'idle';
 		startedNew = false;
 		composerKey += 1;
 		composing = true;
 		void revealComposer();
+	}
+
+	/** True for a note the list should mark with the cloze glyph. */
+	function isClozeNote(note: Note): boolean {
+		return note.type === 'cloze' || note.type === 'image-cloze';
 	}
 
 	/** Close the composer: flush any pending edit, then refresh the list. */
@@ -334,9 +353,10 @@
 	}
 
 	async function remove(note: Note) {
-		const message = note.reversed
-			? 'Delete this note — both its cards and their review history?'
-			: 'Delete this card and its review history?';
+		const message =
+			note.reversed || isClozeNote(note)
+				? 'Delete this note — all of its cards and their review history?'
+				: 'Delete this card and its review history?';
 		if (!confirm(message)) return;
 		try {
 			await api.deleteNote(note.id);
@@ -403,21 +423,34 @@
 		<section class="composer" bind:this={composerEl}>
 			<h2>{startedNew ? 'New card' : 'Edit card'}</h2>
 
-			<label class="field">
-				<span>Front</span>
-				<div class="editor-shell">
+			<div class="field">
+				<span class="field-head">
+					<span id="front-label">Front</span>
+					<button
+						type="button"
+						class="link cloze-button"
+						onclick={() => frontEditor?.cloze()}
+						title="Cloze the selection — or mask a selected image. Alt+C"
+					>
+						<ClozeIcon title="" /> Cloze
+						<kbd>Alt+C</kbd>
+					</button>
+				</span>
+				<div class="editor-shell" aria-labelledby="front-label">
 					{#key composerKey}
 						<Editor
+							bind:this={frontEditor}
 							bind:value={front}
 							placeholder="Front of the card — paste an image straight in"
 							onerror={(m) => (error = m)}
+							onmaskrequest={(src) => (maskSrc = srcWithoutOcclusion(src))}
 						/>
 					{/key}
 				</div>
-			</label>
+			</div>
 
 			<label class="field">
-				<span>Back</span>
+				<span>{noteType === 'basic' ? 'Back' : 'Back — extra context, shown with the answer'}</span>
 				<div class="editor-shell">
 					{#key composerKey}
 						<Editor
@@ -429,14 +462,35 @@
 				</div>
 			</label>
 
-			<label class="checkbox">
-				<input type="checkbox" checked={reversed} onchange={onReversedToggle} />
-				<span class="checkbox-label">
-					<BidirectionalIcon />
-					Bidirectional
-					<small class="muted">Adds a second card asking the other way, scheduled independently.</small>
-				</span>
-			</label>
+			{#if noteType === 'basic'}
+				<label class="checkbox">
+					<input type="checkbox" checked={reversed} onchange={onReversedToggle} />
+					<span class="checkbox-label">
+						<BidirectionalIcon />
+						Bidirectional
+						<small class="muted">Adds a second card asking the other way, scheduled independently.</small>
+					</span>
+				</label>
+			{:else}
+				<p class="cloze-note muted small">
+					<ClozeIcon title="" />
+					{noteType === 'cloze'
+						? 'Cloze note — one card per deletion number, each scheduled independently.'
+						: 'Image cloze — one card per mask, each scheduled independently.'}
+					{#if noteType === 'image-cloze'}
+						<button
+							type="button"
+							class="link"
+							onclick={() => {
+								const m = front.match(/!\[[^\]]*\]\(([^)]*)\)/);
+								if (m) maskSrc = srcWithoutOcclusion(m[1]);
+							}}
+						>
+							Edit masks
+						</button>
+					{/if}
+				</p>
+			{/if}
 
 			<div class="composer-actions">
 				<button type="button" class="primary" onclick={done}>Done</button>
@@ -499,7 +553,8 @@
 						{/if}
 					</p>
 					<div class="note-actions">
-						{#if note.reversed}<BidirectionalIcon />{/if}
+						{#if isClozeNote(note)}<ClozeIcon />{/if}
+						{#if note.reversed && !isClozeNote(note)}<BidirectionalIcon />{/if}
 						<button type="button" class="link" onclick={() => (previewNoteId = note.id)}>
 							Preview
 						</button>
@@ -538,6 +593,18 @@
 
 {#if previewNoteId !== null}
 	<CardPreviewModal noteId={previewNoteId} onclose={() => (previewNoteId = null)} />
+{/if}
+
+{#if maskSrc !== null}
+	<MaskEditorModal
+		src={maskSrc}
+		{occlusion}
+		onsave={(occ) => {
+			occlusion = occ;
+			maskSrc = null;
+		}}
+		onclose={() => (maskSrc = null)}
+	/>
 {/if}
 
 <style>
@@ -627,6 +694,34 @@
 		font-size: 0.8125rem;
 		color: var(--text-2);
 		margin-bottom: 0.25rem;
+	}
+
+	.field-head {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+	}
+
+	.cloze-button {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
+	}
+
+	.cloze-button kbd {
+		font-family: var(--mono);
+		font-size: 0.6875rem;
+		color: var(--text-3);
+		border: 1px solid var(--border);
+		border-radius: 3px;
+		padding: 0 0.25rem;
+	}
+
+	.cloze-note {
+		display: flex;
+		align-items: center;
+		gap: 0.375rem;
+		margin: 0 0 1rem;
 	}
 
 	.editor-shell {

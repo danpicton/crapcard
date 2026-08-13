@@ -3,6 +3,8 @@ import { imageSchema } from '@milkdown/kit/preset/commonmark';
 import type { Node as ProseMirrorNode } from '@milkdown/kit/prose/model';
 import type { EditorView } from '@milkdown/kit/prose/view';
 import { widthFromSrc, srcWithWidth, clampWidth, MIN_IMAGE_WIDTH } from './imageSize';
+import { srcWithoutOcclusion } from '$lib/cloze';
+import { renderOcclusionOverlay } from './occlusionOverlay';
 
 /**
  * Node view for images in the card editor: drag the corner to resize, and
@@ -54,12 +56,17 @@ export const imageView = $view(
 			}
 
 			function syncFromNode(node: ProseMirrorNode) {
-				const src = String(node.attrs.src ?? '');
+				const raw = String(node.attrs.src ?? '');
+				// A rendered image-cloze card carries its masks in the URL
+				// fragment; the request and the width hint use the URL without it.
+				const src = srcWithoutOcclusion(raw);
 				img.src = requestSrc(src);
 				img.alt = String(node.attrs.alt ?? '');
 
 				const width = widthFromSrc(src);
 				img.style.width = width ? `${width}px` : '';
+
+				renderOcclusionOverlay(wrapper, raw);
 			}
 
 			syncFromNode(initialNode);
