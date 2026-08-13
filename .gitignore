@@ -1,0 +1,10 @@
+backend/server
+backend/*.db
+backend/*.db-shm
+backend/*.db-wal
+backend/cmd/server/ui/build/*
+!backend/cmd/server/ui/build/.gitkeep
+frontend/node_modules/
+frontend/build/
+frontend/.svelte-kit/
+node_modules/
