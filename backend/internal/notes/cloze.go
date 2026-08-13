@@ -142,7 +142,8 @@ func (g clozeGenerator) Generate(fields []Field, cfg Config) ([]CardSpec, error)
 }
 
 // Render blanks the tested deletion on the question and reveals everything on
-// the answer, with the back — extra context — appended below it.
+// the answer. The back plays no part: it is disabled while the note is a
+// cloze, kept in storage only so removing the last marker brings it back.
 func (g clozeGenerator) Render(fields []Field, _ Config, template string) (Rendered, error) {
 	front, _ := fieldValue(fields, FieldFront)
 
@@ -160,11 +161,7 @@ func (g clozeGenerator) Render(fields []Field, _ Config, template string) (Rende
 		return Rendered{}, fmt.Errorf("%w: template %q", ErrInvalidNote, template)
 	}
 
-	r := renderClozeText(front, n)
-	if back, _ := fieldValue(fields, FieldBack); strings.TrimSpace(back) != "" {
-		r.Answer += "\n\n" + back
-	}
-	return r, nil
+	return renderClozeText(front, n), nil
 }
 
 // clozeTemplateNumber extracts N from "cloze:N".

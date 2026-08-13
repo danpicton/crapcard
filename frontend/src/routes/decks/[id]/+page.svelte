@@ -450,8 +450,11 @@
 			</div>
 
 			<label class="field">
-				<span>{noteType === 'basic' ? 'Back' : 'Back — extra context, shown with the answer'}</span>
-				<div class="editor-shell">
+				<span>{noteType === 'basic' ? 'Back' : 'Back — disabled while the front is a cloze'}</span>
+				<!-- A cloze note has no back: the deletions are the answers. The
+				     editor goes inert rather than unmounting, so the content is
+				     still there when the last marker or mask is removed. -->
+				<div class="editor-shell" class:disabled={noteType !== 'basic'} inert={noteType !== 'basic'}>
 					{#key composerKey}
 						<Editor
 							bind:value={back}
@@ -728,6 +731,11 @@
 		border: 1px solid var(--border);
 		border-radius: 4px;
 		background: var(--bg);
+	}
+
+	.editor-shell.disabled {
+		opacity: 0.45;
+		background: var(--bg-alt);
 	}
 
 	.checkbox {

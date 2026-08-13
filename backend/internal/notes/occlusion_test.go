@@ -138,7 +138,9 @@ func TestImageClozeRenderDefaultsToHideOne(t *testing.T) {
 	}
 }
 
-func TestImageClozeBackAppendsToAnswer(t *testing.T) {
+func TestImageClozeIgnoresBack(t *testing.T) {
+	// Same rule as text cloze: the back is disabled while the note is a
+	// cloze, so it must not appear on either side.
 	gen, _ := notes.GeneratorFor(notes.TypeImageCloze)
 
 	r, err := gen.Render(
@@ -148,11 +150,11 @@ func TestImageClozeBackAppendsToAnswer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
-	if !strings.HasSuffix(r.Answer, "\n\nThe rumen is the first stomach.") {
-		t.Errorf("answer = %q, want back appended", r.Answer)
+	if strings.Contains(r.Answer, "first stomach") {
+		t.Errorf("answer leaks the disabled back: %q", r.Answer)
 	}
 	if strings.Contains(r.Question, "first stomach") {
-		t.Errorf("question leaks the back: %q", r.Question)
+		t.Errorf("question leaks the disabled back: %q", r.Question)
 	}
 }
 

@@ -132,20 +132,26 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The declared type is only validated, never trusted: an unknown name is
+	// a client bug worth a 400, but the stored type comes from the content
+	// itself, so no client path can save markers or masks into a note that
+	// would render them as raw markup.
 	gen, err := GeneratorFor(NoteType(req.Type))
 	if err != nil {
 		writeNoteError(w, err)
 		return
 	}
+	cfg := Config{
+		Reversed:  req.Reversed != nil && *req.Reversed,
+		Occlusion: req.Occlusion,
+	}
+	fields := fieldsInTypeOrder(gen, req.Fields)
 
 	n, err := h.repo.Create(r.Context(), u.ID, CreateInput{
 		DeckID: req.DeckID,
-		Type:   NoteType(req.Type),
-		Config: Config{
-			Reversed:  req.Reversed != nil && *req.Reversed,
-			Occlusion: req.Occlusion,
-		},
-		Fields: fieldsInTypeOrder(gen, req.Fields),
+		Type:   DetectType(fields, cfg),
+		Config: cfg,
+		Fields: fields,
 	})
 	if err != nil {
 		writeNoteError(w, err)
@@ -287,17 +293,15 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	// The client re-detects the note's type from its content on every save —
-	// adding a cloze to a basic note converts it in place. An omitted type
-	// (an old client) keeps the note as it is.
-	newType := existing.Type
+	// A declared type is validated but not trusted (see Create); the stored
+	// type is re-detected from the edited content, so adding a cloze to a
+	// basic note converts it in place — and removing the last one converts
+	// it back — no matter which client sent the edit.
 	if req.Type != "" {
-		newType = NoteType(req.Type)
-	}
-	gen, err := GeneratorFor(newType)
-	if err != nil {
-		writeNoteError(w, err)
-		return
+		if _, err := GeneratorFor(NoteType(req.Type)); err != nil {
+			writeNoteError(w, err)
+			return
+		}
 	}
 	if req.DeckID == 0 {
 		req.DeckID = existing.DeckID
@@ -310,12 +314,21 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	if req.Occlusion != nil {
 		occlusion = req.Occlusion
 	}
+	cfg := Config{Reversed: reversed, Occlusion: occlusion}
+	// Every type shares the front/back field set, so ordering does not
+	// depend on which type wins detection.
+	gen, err := GeneratorFor(existing.Type)
+	if err != nil {
+		writeNoteError(w, err)
+		return
+	}
+	fields := fieldsInTypeOrder(gen, req.Fields)
 
 	n, err := h.repo.Update(r.Context(), u.ID, id, UpdateInput{
 		DeckID: req.DeckID,
-		Type:   newType,
-		Config: Config{Reversed: reversed, Occlusion: occlusion},
-		Fields: fieldsInTypeOrder(gen, req.Fields),
+		Type:   DetectType(fields, cfg),
+		Config: cfg,
+		Fields: fields,
 	})
 	if err != nil {
 		writeNoteError(w, err)

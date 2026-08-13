@@ -47,7 +47,11 @@ export function detectNoteType(
 	front: string,
 	occlusion: Occlusion | null,
 ): 'basic' | 'cloze' | 'image-cloze' {
-	if (occlusion && occlusion.rects.length > 0) return 'image-cloze';
+	// Masks need an image to mask; without one — deleted mid-edit — they lie
+	// dormant rather than making the note an image cloze with nothing to show.
+	if (occlusion && occlusion.rects.length > 0 && /!\[[^\]]*\]\([^)]*\)/.test(front)) {
+		return 'image-cloze';
+	}
 	if (front.match(CLOZE_MARKER)) return 'cloze';
 	return 'basic';
 }

@@ -92,6 +92,26 @@ var generators = map[NoteType]Generator{
 	TypeImageCloze: occlusionGenerator{},
 }
 
+// DetectType returns the type a note's content implies: masks make it an
+// image cloze, {{cN::…}} markers on the front make it a cloze, anything else
+// is basic. The server decides this itself rather than trusting the client's
+// declared type — a stale build or a replayed offline save must never store a
+// note whose content and type disagree, because that is what puts raw cloze
+// markup in front of the user at review.
+func DetectType(fields []Field, cfg Config) NoteType {
+	front, _ := fieldValue(fields, FieldFront)
+	// Masks need an image to mask. Without one — the user deleted it
+	// mid-edit — they lie dormant rather than failing the save, ready for
+	// the image to come back.
+	if cfg.Occlusion != nil && len(cfg.Occlusion.Rects) > 0 && markdownImage.MatchString(front) {
+		return TypeImageCloze
+	}
+	if len(clozeNumbers(front)) > 0 {
+		return TypeCloze
+	}
+	return TypeBasic
+}
+
 // GeneratorFor returns the generator for a note type, or ErrUnknownNoteType.
 func GeneratorFor(t NoteType) (Generator, error) {
 	g, ok := generators[t]

@@ -81,7 +81,10 @@ func TestClozeNoteRenderBlanksTestedDeletion(t *testing.T) {
 	}
 }
 
-func TestClozeNoteBackAppendsToAnswer(t *testing.T) {
+func TestClozeNoteIgnoresBack(t *testing.T) {
+	// The back is disabled while a note is a cloze — the deletions are the
+	// whole card. It stays stored (removing the last marker brings it back),
+	// but it must not leak into either side.
 	gen, _ := notes.GeneratorFor(notes.TypeCloze)
 	f := fields("front", "{{c1::Ottawa}}", "back", "It sits on the Ottawa River.")
 
@@ -92,7 +95,7 @@ func TestClozeNoteBackAppendsToAnswer(t *testing.T) {
 	if r.Question != "[...]" {
 		t.Errorf("question = %q", r.Question)
 	}
-	if r.Answer != "**Ottawa**\n\nIt sits on the Ottawa River." {
+	if r.Answer != "**Ottawa**" {
 		t.Errorf("answer = %q", r.Answer)
 	}
 }

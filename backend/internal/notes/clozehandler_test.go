@@ -27,6 +27,68 @@ func decodeNote(t *testing.T, body []byte) noteResponse {
 	return got
 }
 
+func TestServerDetectsTypeFromContent(t *testing.T) {
+	e := newRepoEnv(t)
+
+	// A client that says "basic" while the front carries a deletion — an old
+	// build, a stale outbox entry — must not produce a basic note that shows
+	// raw markup at review. The server re-detects the type from content.
+	rec := e.serve(t, e.user, http.MethodPost, "/api/notes",
+		`{"deck_id": `+itoa(e.deck)+`, "type": "basic",
+		  "fields": {"front": "{{c1::Ottawa}} is in Canada.", "back": "b"}}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+	}
+	got := decodeNote(t, rec.Body.Bytes())
+	if got.Type != "cloze" || len(got.Cards) != 1 || got.Cards[0].Template != "cloze:1" {
+		t.Fatalf("created as: %s", rec.Body.String())
+	}
+
+	// The same on update, with the type omitted entirely.
+	rec = e.serve(t, e.user, http.MethodPut, "/api/notes/"+itoa(got.ID),
+		`{"deck_id": `+itoa(e.deck)+`, "fields": {"front": "plain now", "back": "b"}}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update: %d %s", rec.Code, rec.Body.String())
+	}
+	if got = decodeNote(t, rec.Body.Bytes()); got.Type != "basic" {
+		t.Fatalf("type after markers removed = %q, want basic", got.Type)
+	}
+
+	// Masks make it an image cloze no matter what the client called it.
+	rec = e.serve(t, e.user, http.MethodPost, "/api/notes",
+		`{"deck_id": `+itoa(e.deck)+`, "type": "basic",
+		  "fields": {"front": "![cow](/api/images/abc)", "back": "b"},
+		  "occlusion": {"mode": "hide-one", "rects": [{"id": 1, "x": 0.1, "y": 0.1, "w": 0.2, "h": 0.1}]}}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create with masks: %d %s", rec.Code, rec.Body.String())
+	}
+	if got = decodeNote(t, rec.Body.Bytes()); got.Type != "image-cloze" {
+		t.Fatalf("type with masks = %q, want image-cloze", got.Type)
+	}
+}
+
+func TestMasksGoDormantWithoutAnImage(t *testing.T) {
+	e := newRepoEnv(t)
+
+	// Masks with no image left on the front — the user deleted it mid-edit.
+	// The note must degrade to basic (markers would make it cloze), keeping
+	// the masks stored for when the image comes back, not fail the save.
+	rec := e.serve(t, e.user, http.MethodPost, "/api/notes",
+		`{"deck_id": `+itoa(e.deck)+`, "type": "basic",
+		  "fields": {"front": "words only", "back": "b"},
+		  "occlusion": {"mode": "hide-one", "rects": [{"id": 1, "x": 0.1, "y": 0.1, "w": 0.2, "h": 0.1}]}}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+	}
+	got := decodeNote(t, rec.Body.Bytes())
+	if got.Type != "basic" {
+		t.Fatalf("type = %q, want basic while the masks have no image", got.Type)
+	}
+	if got.Occlusion == nil || len(got.Occlusion.Rects) != 1 {
+		t.Fatalf("masks were dropped: %s", rec.Body.String())
+	}
+}
+
 func TestCreateClozeNoteEndpoint(t *testing.T) {
 	e := newRepoEnv(t)
 

@@ -33,6 +33,11 @@ describe('detectNoteType', () => {
 		expect(detectNoteType('![cow](/api/images/abc)', masks)).toBe('image-cloze');
 	});
 
+	it('masks without an image are dormant, not a broken image-cloze', () => {
+		expect(detectNoteType('the image was deleted', masks)).toBe('basic');
+		expect(detectNoteType('{{c1::and markers win}}', masks)).toBe('cloze');
+	});
+
 	it('masks win over text markers — one note, one type', () => {
 		expect(detectNoteType('{{c1::x}} ![cow](/api/images/abc)', masks)).toBe('image-cloze');
 	});

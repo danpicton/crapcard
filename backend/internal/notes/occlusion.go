@@ -172,9 +172,8 @@ func (g occlusionGenerator) Render(fields []Field, cfg Config, template string) 
 		return Rendered{}, err
 	}
 
-	if back, _ := fieldValue(fields, FieldBack); strings.TrimSpace(back) != "" {
-		answer += "\n\n" + back
-	}
+	// The back plays no part: it is disabled while the note is a cloze, same
+	// as text cloze.
 	return Rendered{Question: question, Answer: answer}, nil
 }
 
