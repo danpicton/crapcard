@@ -359,13 +359,13 @@ func publicNote(n *Note, list []*cards.Card) map[string]any {
 	}
 
 	out := map[string]any{
-		"id":         n.ID,
-		"deck_id":    n.DeckID,
-		"type":       string(n.Type),
-		"reversed":   n.Config.Reversed,
+		"id":       n.ID,
+		"deck_id":  n.DeckID,
+		"type":     string(n.Type),
+		"reversed": n.Config.Reversed,
 		// Null for notes without masks, so old clients see nothing new.
-		"occlusion": n.Config.Occlusion,
-		"fields":    f,
+		"occlusion":  n.Config.Occlusion,
+		"fields":     f,
 		"created_at": n.CreatedAt,
 		"updated_at": n.UpdatedAt,
 		// Null rather than a zero time when never studied, so the UI can say
