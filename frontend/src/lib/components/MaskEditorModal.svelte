@@ -125,10 +125,6 @@
 			</button>
 		</header>
 
-		<p class="muted small">
-			Drag over the areas to test. Each mask becomes its own card.
-		</p>
-
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
 			class="canvas"
@@ -156,24 +152,14 @@
 			{/if}
 		</div>
 
-		<fieldset class="mode">
-			<legend class="small muted">When a card is asked</legend>
-			<label>
+		<fieldset class="mode" aria-label="Occlusion mode">
+			<label title="Covers only the tested mask">
 				<input type="radio" name="occlusion-mode" value="hide-one" bind:group={mode} />
-				<span>
-					Hide one
-					<small class="muted">Only the tested area is covered.</small>
-				</span>
+				<span>Hide one</span>
 			</label>
-			<label>
+			<label title="Covers every mask">
 				<input type="radio" name="occlusion-mode" value="hide-all" bind:group={mode} />
-				<span>
-					Hide all
-					<small class="muted">
-						Every mask is covered, the tested one marked — for images where neighbouring labels
-						give the answer away.
-					</small>
-				</span>
+				<span>Hide all</span>
 			</label>
 		</fieldset>
 
@@ -277,26 +263,15 @@
 		margin: 1rem 0 0;
 		padding: 0;
 		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-	}
-
-	.mode legend {
-		padding: 0;
-		margin-bottom: 0.375rem;
+		gap: 1.25rem;
 	}
 
 	.mode label {
 		display: flex;
-		gap: 0.5rem;
-		align-items: flex-start;
+		gap: 0.375rem;
+		align-items: center;
 		font-size: 0.875rem;
 		cursor: pointer;
-	}
-
-	.mode small {
-		display: block;
-		font-size: 0.75rem;
 	}
 
 	.actions {
@@ -335,11 +310,4 @@
 		color: var(--accent-tx);
 	}
 
-	.muted {
-		color: var(--text-3);
-	}
-
-	.small {
-		font-size: 0.8125rem;
-	}
 </style>

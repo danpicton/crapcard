@@ -9,7 +9,7 @@
 		size?: number;
 	}
 
-	let { title = 'Bidirectional — asked in both directions', size = 14 }: Props = $props();
+	let { title = 'Bidirectional', size = 14 }: Props = $props();
 </script>
 
 <span class="icon" {title} role="img" aria-label={title}>

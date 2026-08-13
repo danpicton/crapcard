@@ -13,9 +13,6 @@
 
 <section>
 	<h2>Theme</h2>
-	<p class="muted small">
-		The same themes as crapnote. Your choice is remembered on this device.
-	</p>
 
 	<label class="setting">
 		<span class="setting-label">Theme</span>
@@ -32,11 +29,6 @@
 
 <section>
 	<h2>Card lists</h2>
-	<p class="muted small">
-		How many cards a deck shows per page. A deck's own selector overrides this
-		for that deck; leaving it on the default follows whatever the server is
-		configured with.
-	</p>
 
 	<label class="setting">
 		<span class="setting-label">Cards per page</span>

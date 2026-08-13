@@ -9,7 +9,7 @@
 		size?: number;
 	}
 
-	let { title = 'Cloze — one card per deletion', size = 14 }: Props = $props();
+	let { title = 'Cloze', size = 14 }: Props = $props();
 </script>
 
 <span class="icon" {title} role="img" aria-label={title}>

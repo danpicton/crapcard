@@ -45,7 +45,7 @@
 		<a class="wordmark" href="/">crapcard</a>
 
 		{#if !sync.online}
-			<span class="sync-badge offline" title="Changes are queued and will sync when the connection returns">
+			<span class="sync-badge offline" title="Changes sync when back online">
 				● Offline{sync.pending > 0 ? ` · ${sync.pending} queued` : ''}
 			</span>
 		{:else if sync.flushing}

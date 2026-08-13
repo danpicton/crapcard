@@ -426,22 +426,31 @@
 			<div class="field">
 				<span class="field-head">
 					<span id="front-label">Front</span>
-					<button
-						type="button"
-						class="link cloze-button"
-						onclick={() => frontEditor?.cloze()}
-						title="Cloze the selection — or mask a selected image. Alt+C"
-					>
-						<ClozeIcon title="" /> Cloze
-						<kbd>Alt+C</kbd>
-					</button>
+					<span class="field-tools">
+						{#if noteType === 'image-cloze'}
+							<button
+								type="button"
+								class="link tool"
+								onclick={() => {
+									const m = front.match(/!\[[^\]]*\]\(([^)]*)\)/);
+									if (m) maskSrc = srcWithoutOcclusion(m[1]);
+								}}
+							>
+								Masks · {occlusion?.rects.length ?? 0}
+							</button>
+						{/if}
+						<button type="button" class="link tool" onclick={() => frontEditor?.cloze()}>
+							<ClozeIcon title="" /> Cloze
+							<kbd>Alt+C</kbd>
+						</button>
+					</span>
 				</span>
 				<div class="editor-shell" aria-labelledby="front-label">
 					{#key composerKey}
 						<Editor
 							bind:this={frontEditor}
 							bind:value={front}
-							placeholder="Front of the card — paste an image straight in"
+							placeholder="Front"
 							onerror={(m) => (error = m)}
 							onmaskrequest={(src) => (maskSrc = srcWithoutOcclusion(src))}
 						/>
@@ -450,49 +459,30 @@
 			</div>
 
 			<label class="field">
-				<span>{noteType === 'basic' ? 'Back' : 'Back — disabled while the front is a cloze'}</span>
+				<span>Back</span>
 				<!-- A cloze note has no back: the deletions are the answers. The
 				     editor goes inert rather than unmounting, so the content is
 				     still there when the last marker or mask is removed. -->
-				<div class="editor-shell" class:disabled={noteType !== 'basic'} inert={noteType !== 'basic'}>
+				<div
+					class="editor-shell"
+					class:disabled={noteType !== 'basic'}
+					inert={noteType !== 'basic'}
+					title={noteType !== 'basic' ? 'Not used by cloze cards' : undefined}
+				>
 					{#key composerKey}
-						<Editor
-							bind:value={back}
-							placeholder="Back of the card"
-							onerror={(m) => (error = m)}
-						/>
+						<Editor bind:value={back} placeholder="Back" onerror={(m) => (error = m)} />
 					{/key}
 				</div>
 			</label>
 
 			{#if noteType === 'basic'}
-				<label class="checkbox">
+				<label class="checkbox" title="Adds a second card asking the other way">
 					<input type="checkbox" checked={reversed} onchange={onReversedToggle} />
 					<span class="checkbox-label">
-						<BidirectionalIcon />
+						<BidirectionalIcon title="" />
 						Bidirectional
-						<small class="muted">Adds a second card asking the other way, scheduled independently.</small>
 					</span>
 				</label>
-			{:else}
-				<p class="cloze-note muted small">
-					<ClozeIcon title="" />
-					{noteType === 'cloze'
-						? 'Cloze note — one card per deletion number, each scheduled independently.'
-						: 'Image cloze — one card per mask, each scheduled independently.'}
-					{#if noteType === 'image-cloze'}
-						<button
-							type="button"
-							class="link"
-							onclick={() => {
-								const m = front.match(/!\[[^\]]*\]\(([^)]*)\)/);
-								if (m) maskSrc = srcWithoutOcclusion(m[1]);
-							}}
-						>
-							Edit masks
-						</button>
-					{/if}
-				</p>
 			{/if}
 
 			<div class="composer-actions">
@@ -506,11 +496,6 @@
 				{/if}
 				<span class="save-status muted small" role="status">{saveLabel[saveStatus]}</span>
 			</div>
-			{#if editingId === null && pendingCreateRef === null}
-				<p class="muted small hint">
-					Saves itself as you type, once both sides have something on them.
-				</p>
-			{/if}
 		</section>
 	{/if}
 
@@ -699,32 +684,33 @@
 		margin-bottom: 0.25rem;
 	}
 
-	.field-head {
+	/* Child selector to outweigh `.field > span`, which would otherwise keep
+	   this block-level and let the tools fall in line with the label. */
+	.field > .field-head {
 		display: flex;
 		align-items: baseline;
 		justify-content: space-between;
 	}
 
-	.cloze-button {
+	.field-tools {
+		display: inline-flex;
+		align-items: baseline;
+		gap: 0.875rem;
+	}
+
+	.tool {
 		display: inline-flex;
 		align-items: center;
 		gap: 0.25rem;
 	}
 
-	.cloze-button kbd {
+	.tool kbd {
 		font-family: var(--mono);
 		font-size: 0.6875rem;
 		color: var(--text-3);
 		border: 1px solid var(--border);
 		border-radius: 3px;
 		padding: 0 0.25rem;
-	}
-
-	.cloze-note {
-		display: flex;
-		align-items: center;
-		gap: 0.375rem;
-		margin: 0 0 1rem;
 	}
 
 	.editor-shell {
@@ -740,15 +726,10 @@
 
 	.checkbox {
 		display: flex;
-		align-items: flex-start;
+		align-items: center;
 		gap: 0.5rem;
 		font-size: 0.875rem;
 		margin-bottom: 1rem;
-	}
-
-	.checkbox small {
-		display: block;
-		font-size: 0.75rem;
 	}
 
 	.composer-actions {
@@ -826,10 +807,6 @@
 		align-items: center;
 		flex-wrap: wrap;
 		gap: 0.375rem;
-	}
-
-	.hint {
-		margin: 0.5rem 0 0;
 	}
 
 	.note-meta {
