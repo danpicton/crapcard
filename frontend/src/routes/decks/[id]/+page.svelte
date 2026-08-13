@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
+	import { slide } from 'svelte/transition';
 	import { page } from '$app/state';
 	import { api, ApiError, type Deck, type Note, type Occlusion, type QueueCounts } from '$lib/api';
 	import { prefs } from '$lib/stores/prefs.svelte';
@@ -458,22 +459,19 @@
 				</div>
 			</div>
 
-			<label class="field">
-				<span>Back</span>
-				<!-- A cloze note has no back: the deletions are the answers. The
-				     editor goes inert rather than unmounting, so the content is
-				     still there when the last marker or mask is removed. -->
-				<div
-					class="editor-shell"
-					class:disabled={noteType !== 'basic'}
-					inert={noteType !== 'basic'}
-					title={noteType !== 'basic' ? 'Not used by cloze cards' : undefined}
-				>
-					{#key composerKey}
-						<Editor bind:value={back} placeholder="Back" onerror={(m) => (error = m)} />
-					{/key}
-				</div>
-			</label>
+			<!-- A cloze note has no back: the deletions are the answers. The
+			     field slides away when a deletion or mask appears, and comes
+			     back — content intact — when the last one is removed. -->
+			{#if noteType === 'basic'}
+				<label class="field" transition:slide={{ duration: 150 }}>
+					<span>Back</span>
+					<div class="editor-shell">
+						{#key composerKey}
+							<Editor bind:value={back} placeholder="Back" onerror={(m) => (error = m)} />
+						{/key}
+					</div>
+				</label>
+			{/if}
 
 			{#if noteType === 'basic'}
 				<label class="checkbox" title="Adds a second card asking the other way">
@@ -717,11 +715,6 @@
 		border: 1px solid var(--border);
 		border-radius: 4px;
 		background: var(--bg);
-	}
-
-	.editor-shell.disabled {
-		opacity: 0.45;
-		background: var(--bg-alt);
 	}
 
 	.checkbox {
