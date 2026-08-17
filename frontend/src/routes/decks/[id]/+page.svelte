@@ -2,14 +2,24 @@
 	import { onMount, tick } from 'svelte';
 	import { slide } from 'svelte/transition';
 	import { page } from '$app/state';
-	import { api, ApiError, type Deck, type Note, type Occlusion, type QueueCounts } from '$lib/api';
+	import {
+		api,
+		ApiError,
+		type CardSummary,
+		type Deck,
+		type Note,
+		type Occlusion,
+		type QueueCounts,
+	} from '$lib/api';
 	import { prefs } from '$lib/stores/prefs.svelte';
 	import { sync } from '$lib/stores/sync.svelte';
 	import { summariseMarkdown, pageSizeOptionsFor } from '$lib/noteSummary';
-	import { detectNoteType, srcWithoutOcclusion } from '$lib/cloze';
+	import { detectNoteType, srcWithoutOcclusion, templateLabel } from '$lib/cloze';
 	import Editor from '$lib/components/Editor.svelte';
 	import BidirectionalIcon from '$lib/components/BidirectionalIcon.svelte';
 	import ClozeIcon from '$lib/components/ClozeIcon.svelte';
+	import FlagIcon from '$lib/components/FlagIcon.svelte';
+	import FlagCardModal from '$lib/components/FlagCardModal.svelte';
 	import CardPreviewModal from '$lib/components/CardPreviewModal.svelte';
 	import MaskEditorModal from '$lib/components/MaskEditorModal.svelte';
 
@@ -25,6 +35,13 @@
 
 	// Which note the preview modal is showing, if any.
 	let previewNoteId = $state<number | null>(null);
+
+	// How many cards in the deck are flagged, for the head's link.
+	let flaggedCount = $state(0);
+	// Which note's per-card manager is unfolded, if any.
+	let manageNoteId = $state<number | null>(null);
+	// The flag/suspend dialog, when open, and the card it is about.
+	let cardModal = $state<{ cardId: number; mode: 'flag' | 'suspend' } | null>(null);
 
 	// The page size in force: the deck header's selector overrides the user's
 	// setting, which overrides the deployment default.
@@ -200,15 +217,17 @@
 		loading = true;
 		error = null;
 		try {
-			const [loadedDeck, page, loadedCounts] = await Promise.all([
+			const [loadedDeck, page, loadedCounts, flagged] = await Promise.all([
 				api.getDeck(deckId),
 				api.listNotes({ deckId, limit: pageSize, offset }),
 				api.deckCounts(deckId).catch(() => null),
+				api.flaggedCards(deckId).catch(() => null),
 			]);
 			deck = loadedDeck;
 			notes = page.items;
 			total = page.total;
 			counts = loadedCounts;
+			flaggedCount = flagged?.cards.length ?? 0;
 
 			// A deletion can empty the last page; step back rather than
 			// showing an empty list under a pager that says there is more.
@@ -367,6 +386,53 @@
 		}
 	}
 
+	// ── Per-card state: suspend, flag, bury ─────────────────────────────
+
+	function buriedNow(c: CardSummary): boolean {
+		return c.buried_until !== null && new Date(c.buried_until).getTime() > Date.now();
+	}
+
+	function anySuspended(note: Note): boolean {
+		return (note.cards ?? []).some((c) => c.suspended);
+	}
+
+	function anyFlagged(note: Note): boolean {
+		return (note.cards ?? []).some((c) => c.flagged);
+	}
+
+	/** "back 21 Aug" — when a buried card returns. */
+	function buriedLabel(until: string): string {
+		return `back ${new Date(until).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`;
+	}
+
+	/** Run one card action against the server and refresh the list. */
+	async function cardAction(fn: () => Promise<unknown>, failure: string) {
+		try {
+			await fn();
+			await load();
+		} catch (err) {
+			error = err instanceof Error ? err.message : failure;
+		}
+	}
+
+	function onCardModalConfirm(choice: { flag: boolean; reason: string; suspend: boolean }) {
+		const target = cardModal;
+		cardModal = null;
+		if (!target) return;
+		void cardAction(async () => {
+			if (choice.flag) await api.flagCard(target.cardId, true, choice.reason);
+			if (choice.suspend) await api.suspendCard(target.cardId, true);
+		}, 'could not update the card');
+	}
+
+	function buryPrompt(cardId: number) {
+		const raw = prompt('Bury for how many days?', '3');
+		if (raw === null) return;
+		const days = Number(raw);
+		if (!Number.isInteger(days) || days < 1 || days > 365) return;
+		void cardAction(() => api.buryCard(cardId, days), 'could not bury the card');
+	}
+
 </script>
 
 <a class="back" href="/decks">← All decks</a>
@@ -408,6 +474,12 @@
 				{#if deck.description}<p class="muted small">{deck.description}</p>{/if}
 			</div>
 			<div class="head-actions">
+				{#if flaggedCount > 0}
+					<a class="flagged-link" href="/decks/{deckId}/flagged">
+						<FlagIcon title="" />
+						Flagged · {flaggedCount}
+					</a>
+				{/if}
 				{#if counts && counts.total > 0}
 					<a class="primary button" href="/decks/{deckId}/study">Study {counts.total}</a>
 				{/if}
@@ -539,8 +611,18 @@
 						{/if}
 					</p>
 					<div class="note-actions">
+						{#if anyFlagged(note)}<FlagIcon />{/if}
+						{#if anySuspended(note)}<span class="state-chip" title="Has a suspended card">suspended</span>{/if}
+						{#if (note.cards ?? []).some(buriedNow)}<span class="state-chip" title="Has a buried card">buried</span>{/if}
 						{#if isClozeNote(note)}<ClozeIcon />{/if}
 						{#if note.reversed && !isClozeNote(note)}<BidirectionalIcon />{/if}
+						<button
+							type="button"
+							class="link"
+							onclick={() => (manageNoteId = manageNoteId === note.id ? null : note.id)}
+						>
+							Cards
+						</button>
 						<button type="button" class="link" onclick={() => (previewNoteId = note.id)}>
 							Preview
 						</button>
@@ -549,6 +631,102 @@
 							Delete
 						</button>
 					</div>
+					{#if manageNoteId === note.id}
+						<ul class="cards-manager" transition:slide={{ duration: 150 }}>
+							{#each note.cards ?? [] as c (c.id)}
+								<li class="card-row">
+									<span class="card-name">
+										{templateLabel(c.template)}
+										{#if c.flagged}<FlagIcon />{/if}
+										{#if c.suspended}<span class="state-chip">suspended</span>{/if}
+										{#if buriedNow(c)}
+											<span class="state-chip" title={c.buried_until}>
+												buried · {buriedLabel(c.buried_until ?? '')}
+											</span>
+										{/if}
+									</span>
+									<span class="card-row-actions">
+										{#if c.flagged}
+											<button
+												type="button"
+												class="link"
+												onclick={() =>
+													cardAction(
+														() => api.flagCard(c.id, false),
+														'could not unflag the card',
+													)}
+											>
+												Unflag
+											</button>
+										{:else}
+											<button
+												type="button"
+												class="link"
+												onclick={() => (cardModal = { cardId: c.id, mode: 'flag' })}
+											>
+												Flag
+											</button>
+										{/if}
+										{#if c.suspended}
+											<button
+												type="button"
+												class="link"
+												onclick={() =>
+													cardAction(
+														() => api.suspendCard(c.id, false),
+														'could not resume the card',
+													)}
+											>
+												Resume
+											</button>
+										{:else}
+											<button
+												type="button"
+												class="link"
+												onclick={() => (cardModal = { cardId: c.id, mode: 'suspend' })}
+											>
+												Suspend
+											</button>
+										{/if}
+										{#if buriedNow(c)}
+											<button
+												type="button"
+												class="link"
+												onclick={() =>
+													cardAction(
+														() => api.buryCard(c.id, 0),
+														'could not unbury the card',
+													)}
+											>
+												Unbury
+											</button>
+										{:else}
+											<button
+												type="button"
+												class="link"
+												title="Hide this card until tomorrow"
+												onclick={() =>
+													cardAction(
+														() => api.buryCard(c.id, 1),
+														'could not bury the card',
+													)}
+											>
+												Bury
+											</button>
+											<button
+												type="button"
+												class="link"
+												title="Hide this card for a number of days"
+												onclick={() => buryPrompt(c.id)}
+											>
+												Bury…
+											</button>
+										{/if}
+									</span>
+								</li>
+							{/each}
+						</ul>
+					{/if}
 				</li>
 			{/each}
 		</ul>
@@ -579,6 +757,14 @@
 
 {#if previewNoteId !== null}
 	<CardPreviewModal noteId={previewNoteId} onclose={() => (previewNoteId = null)} />
+{/if}
+
+{#if cardModal !== null}
+	<FlagCardModal
+		mode={cardModal.mode}
+		onconfirm={onCardModalConfirm}
+		onclose={() => (cardModal = null)}
+	/>
 {/if}
 
 {#if maskSrc !== null}
@@ -747,6 +933,7 @@
 	.note {
 		position: relative;
 		display: flex;
+		flex-wrap: wrap;
 		align-items: flex-start;
 		justify-content: space-between;
 		gap: 1rem;
@@ -824,6 +1011,62 @@
 		align-items: center;
 		gap: 0.625rem;
 		flex-shrink: 0;
+	}
+
+	.flagged-link {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.375rem;
+		font-size: 0.875rem;
+		color: var(--text-2);
+		text-decoration: none;
+		padding: 0.4rem 0;
+	}
+
+	.flagged-link:hover {
+		color: var(--accent-tx);
+	}
+
+	.state-chip {
+		font-size: 0.6875rem;
+		padding: 0.0625rem 0.4375rem;
+		border-radius: 999px;
+		background: var(--bg-hover);
+		color: var(--text-2);
+		white-space: nowrap;
+	}
+
+	/* The per-note card manager unfolds full-width under the note row. */
+	.cards-manager {
+		flex-basis: 100%;
+		list-style: none;
+		margin: 0;
+		padding: 0.375rem 0 0;
+		border-top: 1px solid var(--border);
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
+	}
+
+	.card-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+		font-size: 0.8125rem;
+	}
+
+	.card-name {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+		color: var(--text-2);
+	}
+
+	.card-row-actions {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.625rem;
 	}
 
 	.primary,

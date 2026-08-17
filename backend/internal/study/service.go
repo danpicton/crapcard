@@ -44,6 +44,9 @@ type Question struct {
 	Question string
 	Answer   string
 	State    srs.State
+	// Flagged rides along so the study screen can show the flag icon. The
+	// reason deliberately does not: it is only read in the flagged-cards view.
+	Flagged  bool
 	Counts   cards.Counts
 	Previews map[srs.Rating]Preview
 }
@@ -133,6 +136,7 @@ func (s *Service) render(ctx context.Context, userID int64, card *cards.Card, de
 		Question: rendered.Question,
 		Answer:   rendered.Answer,
 		State:    card.State.State,
+		Flagged:  card.Flagged,
 		Counts:   counts,
 		Previews: s.previews(card.State, h.Now),
 	}, nil
@@ -270,4 +274,96 @@ func (s *Service) Answer(ctx context.Context, userID, cardID int64, rating srs.R
 // deck list.
 func (s *Service) DeckCounts(ctx context.Context, userID, deckID int64, h cards.Horizon) (cards.Counts, error) {
 	return s.cards.Counts(ctx, userID, deckID, h)
+}
+
+// SetSuspended suspends or resumes a card.
+func (s *Service) SetSuspended(ctx context.Context, userID, cardID int64, suspended bool) error {
+	return s.cards.SetSuspended(ctx, userID, cardID, suspended)
+}
+
+// Flag flags or unflags a card, keeping the reason only while flagged.
+func (s *Service) Flag(ctx context.Context, userID, cardID int64, flagged bool, reason string) error {
+	return s.cards.SetFlag(ctx, userID, cardID, flagged, reason)
+}
+
+// MaxBuryDays bounds how far ahead a card can be buried. Burial is "not
+// today, come back soon" — anything longer is what suspension is for.
+const MaxBuryDays = 365
+
+// ErrBadBuryDays is returned for a day count outside 0..MaxBuryDays.
+var ErrBadBuryDays = errors.New("bury days out of range")
+
+// Bury hides a card for the given number of the user's own days: 1 buries it
+// until the next local midnight (Anki's "bury until tomorrow"), n until n-1
+// midnights after that, and 0 unburies. Returns when the card comes back —
+// the zero time for an unbury.
+func (s *Service) Bury(ctx context.Context, userID, cardID int64, days int, h cards.Horizon) (time.Time, error) {
+	if days < 0 || days > MaxBuryDays {
+		return time.Time{}, ErrBadBuryDays
+	}
+	var until time.Time
+	if days > 0 {
+		// ReviewDueBefore is already the user's next local midnight.
+		until = h.ReviewDueBefore.AddDate(0, 0, days-1)
+	}
+	if err := s.cards.SetBuriedUntil(ctx, userID, cardID, until); err != nil {
+		return time.Time{}, err
+	}
+	return until, nil
+}
+
+// FlaggedCard is one entry in the flagged-cards view: the rendered question
+// so the list is recognisable, plus the reason and the card's other states so
+// the view can offer to lift them.
+type FlaggedCard struct {
+	CardID      int64
+	NoteID      int64
+	Template    string
+	Question    string
+	Reason      string
+	Suspended   bool
+	BuriedUntil time.Time
+	State       srs.State
+	Due         time.Time
+}
+
+// FlaggedCards returns the deck's flagged cards, rendered. The deck is
+// loaded first so an unknown deck 404s rather than answering an empty list.
+func (s *Service) FlaggedCards(ctx context.Context, userID, deckID int64) ([]FlaggedCard, error) {
+	if _, err := s.decks.Get(ctx, userID, deckID); err != nil {
+		return nil, err
+	}
+
+	list, err := s.cards.ListFlagged(ctx, userID, deckID)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]FlaggedCard, 0, len(list))
+	for _, card := range list {
+		note, err := s.notes.Get(ctx, userID, card.NoteID)
+		if err != nil {
+			return nil, fmt.Errorf("load note for card %d: %w", card.ID, err)
+		}
+		gen, err := notes.GeneratorFor(note.Type)
+		if err != nil {
+			return nil, err
+		}
+		rendered, err := gen.Render(note.Fields, note.Config, card.Template)
+		if err != nil {
+			return nil, fmt.Errorf("render card %d: %w", card.ID, err)
+		}
+		out = append(out, FlaggedCard{
+			CardID:      card.ID,
+			NoteID:      card.NoteID,
+			Template:    card.Template,
+			Question:    rendered.Question,
+			Reason:      card.FlagReason,
+			Suspended:   card.Suspended,
+			BuriedUntil: card.BuriedUntil,
+			State:       card.State.State,
+			Due:         card.State.Due,
+		})
+	}
+	return out, nil
 }

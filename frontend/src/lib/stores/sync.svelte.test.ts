@@ -7,6 +7,9 @@ function testDeps() {
 		answerCard: vi.fn().mockResolvedValue({}),
 		updateNote: vi.fn().mockResolvedValue({ id: 1 }),
 		createNote: vi.fn().mockResolvedValue({ id: 42 }),
+		suspendCard: vi.fn().mockResolvedValue({}),
+		flagCard: vi.fn().mockResolvedValue({}),
+		buryCard: vi.fn().mockResolvedValue({}),
 		ping: vi.fn().mockResolvedValue(undefined),
 	};
 }
@@ -102,5 +105,56 @@ describe('sync store', () => {
 		const second = createSyncStore(deps);
 		second.init(); // restores the outbox and starts flushing it
 		await vi.waitFor(() => expect(deps.answerCard).toHaveBeenCalledWith(1, 3));
+	});
+});
+
+describe('card action outbox entries', () => {
+	beforeEach(() => {
+		localStorage.clear();
+	});
+
+	it('replays suspends, flags and buries in order with the rest', async () => {
+		const deps = testDeps();
+		const calls: string[] = [];
+		deps.answerCard.mockImplementation(async (id: number) => {
+			calls.push(`answer:${id}`);
+			return {};
+		});
+		deps.flagCard.mockImplementation(async (id: number, flagged: boolean, reason: string) => {
+			calls.push(`flag:${id}:${flagged}:${reason}`);
+			return {};
+		});
+		deps.suspendCard.mockImplementation(async (id: number, suspended: boolean) => {
+			calls.push(`suspend:${id}:${suspended}`);
+			return {};
+		});
+		deps.buryCard.mockImplementation(async (id: number, days: number) => {
+			calls.push(`bury:${id}:${days}`);
+			return {};
+		});
+
+		const s = createSyncStore(deps);
+		s.queueAnswer(1, 3);
+		s.queueFlag(2, true, 'odd wording');
+		s.queueSuspend(2, true);
+		s.queueBury(3, 5);
+		await s.flush();
+
+		expect(calls).toEqual(['answer:1', 'flag:2:true:odd wording', 'suspend:2:true', 'bury:3:5']);
+		expect(s.pending).toBe(0);
+	});
+
+	it('keeps card actions queued across a network failure', async () => {
+		const deps = testDeps();
+		deps.suspendCard.mockRejectedValue(networkDown);
+
+		const s = createSyncStore(deps);
+		s.queueSuspend(9, true);
+		await s.flush();
+		expect(s.pending).toBe(1);
+
+		deps.suspendCard.mockResolvedValue({});
+		await s.flush();
+		expect(s.pending).toBe(0);
 	});
 });

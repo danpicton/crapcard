@@ -38,8 +38,21 @@ type Card struct {
 	DeckID    int64
 	Template  string
 	Suspended bool
-	State     srs.CardState
-	CreatedAt time.Time
+	Flagged   bool
+	// FlagReason is free text the user left for their future self; empty when
+	// the card is not flagged.
+	FlagReason string
+	// BuriedUntil is when a buried card returns to the queue; the zero time
+	// means not buried. A past value counts as not buried, so cards unbury
+	// themselves without anything sweeping the table.
+	BuriedUntil time.Time
+	State       srs.CardState
+	CreatedAt   time.Time
+}
+
+// Buried reports whether the card is still hidden at the given moment.
+func (c *Card) Buried(now time.Time) bool {
+	return !c.BuriedUntil.IsZero() && c.BuriedUntil.After(now)
 }
 
 // Counts summarises a deck's queue.
@@ -86,16 +99,17 @@ func (r *Repository) conn(tx execer) execer {
 	return tx
 }
 
-const cardColumns = `id, note_id, user_id, deck_id, template, suspended,
+const cardColumns = `id, note_id, user_id, deck_id, template, suspended, flagged, flag_reason, buried_until,
 	due, stability, difficulty, elapsed_days, scheduled_days, reps, lapses, state, last_review,
 	created_at`
 
 func scanCard(row interface{ Scan(...any) error }) (*Card, error) {
 	c := &Card{}
-	var suspended int
-	var lastReview sql.NullTime
+	var suspended, flagged int
+	var buriedUntil, lastReview sql.NullTime
 	if err := row.Scan(
 		&c.ID, &c.NoteID, &c.UserID, &c.DeckID, &c.Template, &suspended,
+		&flagged, &c.FlagReason, &buriedUntil,
 		&c.State.Due, &c.State.Stability, &c.State.Difficulty,
 		&c.State.ElapsedDays, &c.State.ScheduledDays, &c.State.Reps, &c.State.Lapses,
 		&c.State.State, &lastReview,
@@ -104,6 +118,10 @@ func scanCard(row interface{ Scan(...any) error }) (*Card, error) {
 		return nil, err
 	}
 	c.Suspended = suspended != 0
+	c.Flagged = flagged != 0
+	if buriedUntil.Valid {
+		c.BuriedUntil = buriedUntil.Time
+	}
 	if lastReview.Valid {
 		c.State.LastReview = lastReview.Time
 	}
@@ -264,6 +282,15 @@ func (h Horizon) dueClauseArgs() []any {
 	return []any{h.ReviewDueBefore.UTC(), h.Now.UTC()}
 }
 
+// notBuriedSQL builds the clause keeping buried cards out of the queue: a
+// card is available when it was never buried or its burial has lapsed. Bind
+// the horizon's Now alongside.
+func notBuriedSQL(prefix string) string {
+	return fmt.Sprintf(`(%[1]sburied_until IS NULL OR %[1]sburied_until<=?)`, prefix)
+}
+
+var notBuriedClause = notBuriedSQL("")
+
 // Due returns cards from the deck that are ready to study, capped at limit.
 //
 // Cards mid-flight — learning, relearning and due reviews — come first,
@@ -276,10 +303,10 @@ func (r *Repository) Due(ctx context.Context, userID, deckID int64, h Horizon, l
 	}
 
 	args := append([]any{userID, deckID}, h.dueClauseArgs()...)
-	args = append(args, int(srs.StateNew), limit)
+	args = append(args, h.Now.UTC(), int(srs.StateNew), limit)
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT `+cardColumns+` FROM cards
-		 WHERE user_id=? AND deck_id=? AND suspended=0 AND `+dueClause+`
+		 WHERE user_id=? AND deck_id=? AND suspended=0 AND `+dueClause+` AND `+notBuriedClause+`
 		 ORDER BY CASE WHEN state=? THEN 1 ELSE 0 END, due, id
 		 LIMIT ?`,
 		args...)
@@ -315,6 +342,7 @@ func (r *Repository) NextDeckToStudy(ctx context.Context, userID int64, h Horizo
 	// the due cards alone would make the deck you just studied look untouched.
 	var deckID int64
 	args := append([]any{userID, userID}, h.dueClauseArgs()...)
+	args = append(args, h.Now.UTC())
 	err := r.db.QueryRowContext(ctx,
 		`SELECT ranked.deck_id
 		 FROM (
@@ -325,7 +353,8 @@ func (r *Repository) NextDeckToStudy(ctx context.Context, userID int64, h Horizo
 		 ) AS ranked
 		 WHERE EXISTS (
 		   SELECT 1 FROM cards c
-		   WHERE c.user_id=? AND c.deck_id=ranked.deck_id AND c.suspended=0 AND `+dueSQL("c.")+`
+		   WHERE c.user_id=? AND c.deck_id=ranked.deck_id AND c.suspended=0
+		     AND `+dueSQL("c.")+` AND `+notBuriedSQL("c.")+`
 		 )
 		 ORDER BY ranked.recency DESC, ranked.deck_id
 		 LIMIT 1`,
@@ -356,11 +385,11 @@ func (r *Repository) Counts(ctx context.Context, userID, deckID int64, h Horizon
 		   COALESCE(SUM(CASE WHEN state IN (?, ?)        THEN 1 ELSE 0 END), 0),
 		   COALESCE(SUM(CASE WHEN state=? AND due<? THEN 1 ELSE 0 END), 0)
 		 FROM cards
-		 WHERE user_id=? AND deck_id=? AND suspended=0`,
+		 WHERE user_id=? AND deck_id=? AND suspended=0 AND `+notBuriedClause,
 		int(srs.StateNew), h.Now.UTC(),
 		int(srs.StateLearning), int(srs.StateRelearning),
 		int(srs.StateReview), h.ReviewDueBefore.UTC(),
-		userID, deckID,
+		userID, deckID, h.Now.UTC(),
 	).Scan(&c.New, &c.Learning, &c.Due)
 	if err != nil {
 		return c, fmt.Errorf("queue counts: %w", err)
@@ -575,4 +604,103 @@ func (r *Repository) SetSuspended(ctx context.Context, userID, cardID int64, sus
 		return ErrNotFound
 	}
 	return nil
+}
+
+// SetFlag flags or unflags a card. The reason is only kept while the card is
+// flagged: unflagging clears it, so a later flag starts from a blank slate.
+func (r *Repository) SetFlag(ctx context.Context, userID, cardID int64, flagged bool, reason string) error {
+	v := 0
+	if !flagged {
+		reason = ""
+	} else {
+		v = 1
+	}
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE cards SET flagged=?, flag_reason=? WHERE id=? AND user_id=?`,
+		v, reason, cardID, userID)
+	if err != nil {
+		return fmt.Errorf("set flag: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetBuriedUntil buries a card until the given moment, or unburies it when
+// passed the zero time. Burial keeps scheduling state untouched — the card
+// simply sits out the queue until the moment passes.
+func (r *Repository) SetBuriedUntil(ctx context.Context, userID, cardID int64, until time.Time) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE cards SET buried_until=? WHERE id=? AND user_id=?`,
+		nullableTime(until), cardID, userID)
+	if err != nil {
+		return fmt.Errorf("set buried: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ListFlagged returns the deck's flagged cards. When a card was flagged is
+// not tracked, so ordering falls back to id — stable, roughly creation order.
+func (r *Repository) ListFlagged(ctx context.Context, userID, deckID int64) ([]*Card, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+cardColumns+` FROM cards WHERE user_id=? AND deck_id=? AND flagged=1 ORDER BY id`,
+		userID, deckID)
+	if err != nil {
+		return nil, fmt.Errorf("list flagged cards: %w", err)
+	}
+	defer rows.Close()
+
+	list := []*Card{}
+	for rows.Next() {
+		c, err := scanCard(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan card: %w", err)
+		}
+		list = append(list, c)
+	}
+	return list, rows.Err()
+}
+
+// ListForNotes returns the user's cards for a set of notes in one query,
+// keyed by note id — the note list's way of showing per-card state without a
+// query per row. Cards come back in template order within each note.
+func (r *Repository) ListForNotes(ctx context.Context, userID int64, noteIDs []int64) (map[int64][]*Card, error) {
+	out := map[int64][]*Card{}
+	if len(noteIDs) == 0 {
+		return out, nil
+	}
+
+	placeholders := ""
+	args := make([]any, 0, len(noteIDs)+1)
+	args = append(args, userID)
+	for i, id := range noteIDs {
+		if i > 0 {
+			placeholders += ","
+		}
+		placeholders += "?"
+		args = append(args, id)
+	}
+
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+cardColumns+` FROM cards
+		 WHERE user_id=? AND note_id IN (`+placeholders+`)
+		 ORDER BY note_id, template`,
+		args...)
+	if err != nil {
+		return nil, fmt.Errorf("list cards for notes: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		c, err := scanCard(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan card: %w", err)
+		}
+		out[c.NoteID] = append(out[c.NoteID], c)
+	}
+	return out, rows.Err()
 }

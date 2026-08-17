@@ -4,6 +4,8 @@
 	import { sync } from '$lib/stores/sync.svelte';
 	import { Rating } from '$lib/api';
 	import Editor from '$lib/components/Editor.svelte';
+	import FlagIcon from '$lib/components/FlagIcon.svelte';
+	import FlagCardModal from '$lib/components/FlagCardModal.svelte';
 
 	/**
 	 * The whole review loop as one component, shared by the landing screen
@@ -41,6 +43,27 @@
 		revealedAt = Date.now();
 	}
 
+	// Which card-action dialog is open, if any. Null while studying.
+	let cardModal = $state<'flag' | 'suspend' | null>(null);
+
+	function onCardAction(choice: { flag: boolean; reason: string; suspend: boolean }) {
+		cardModal = null;
+		if (choice.flag) {
+			void session.setFlag(true, choice.reason, choice.suspend);
+		} else if (choice.suspend) {
+			void session.suspend(null);
+		}
+	}
+
+	/** Bury for a stretch the user picks — "not tomorrow, but soon". */
+	function buryMore() {
+		const raw = prompt('Bury for how many days?', '3');
+		if (raw === null) return;
+		const days = Number(raw);
+		if (!Number.isInteger(days) || days < 1 || days > 365) return;
+		void session.bury(days);
+	}
+
 	onMount(() => {
 		void session.start();
 		window.addEventListener('keydown', onKeydown);
@@ -65,6 +88,8 @@
 	 * card is what makes reviewing feel like work.
 	 */
 	function onKeydown(event: KeyboardEvent) {
+		// A dialog owns the keyboard while it is open.
+		if (cardModal !== null) return;
 		const target = event.target as HTMLElement | null;
 		if (target?.isContentEditable || target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA')
 			return;
@@ -166,6 +191,58 @@
 		</div>
 	</div>
 {:else if session.card}
+	<!-- Housekeeping actions for the card in front of you: annotate it or set
+	     it aside without grading it. Deliberately quiet — grading is the job,
+	     these are the exceptions. -->
+	<div class="card-tools">
+		{#if session.card.flagged}
+			<FlagIcon />
+			<button
+				type="button"
+				class="link"
+				disabled={session.submitting}
+				onclick={() => session.setFlag(false, '')}
+			>
+				Unflag
+			</button>
+		{:else}
+			<button
+				type="button"
+				class="link"
+				disabled={session.submitting}
+				onclick={() => (cardModal = 'flag')}
+			>
+				Flag
+			</button>
+		{/if}
+		<button
+			type="button"
+			class="link"
+			disabled={session.submitting}
+			onclick={() => (cardModal = 'suspend')}
+		>
+			Suspend
+		</button>
+		<button
+			type="button"
+			class="link"
+			disabled={session.submitting}
+			onclick={() => session.bury(1)}
+			title="Hide this card until tomorrow"
+		>
+			Bury
+		</button>
+		<button
+			type="button"
+			class="link"
+			disabled={session.submitting}
+			onclick={buryMore}
+			title="Hide this card for a number of days"
+		>
+			Bury…
+		</button>
+	</div>
+
 	<!-- Keyed on the card so the editor remounts with new content: Milkdown
 	     takes its value at creation time and does not track prop changes. -->
 	{#key session.card.card_id}
@@ -233,7 +310,19 @@
 	{/if}
 {/if}
 
+{#if cardModal !== null}
+	<FlagCardModal mode={cardModal} onconfirm={onCardAction} onclose={() => (cardModal = null)} />
+{/if}
+
 <style>
+	.card-tools {
+		display: flex;
+		align-items: center;
+		justify-content: flex-end;
+		gap: 0.75rem;
+		margin-bottom: 0.375rem;
+	}
+
 	.session-head {
 		display: flex;
 		align-items: baseline;

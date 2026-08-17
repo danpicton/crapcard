@@ -42,6 +42,10 @@ func (h *Handler) Register(mux *http.ServeMux, requireAuth Middleware) {
 	mux.Handle("POST /api/study/undo", requireAuth(http.HandlerFunc(h.Undo)))
 	mux.Handle("GET /api/decks/{id}/study/queue", requireAuth(http.HandlerFunc(h.Queue)))
 	mux.Handle("GET /api/study/queue", requireAuth(http.HandlerFunc(h.QueueAnywhere)))
+	mux.Handle("POST /api/cards/{id}/suspend", requireAuth(http.HandlerFunc(h.Suspend)))
+	mux.Handle("POST /api/cards/{id}/flag", requireAuth(http.HandlerFunc(h.Flag)))
+	mux.Handle("POST /api/cards/{id}/bury", requireAuth(http.HandlerFunc(h.Bury)))
+	mux.Handle("GET /api/decks/{id}/flagged", requireAuth(http.HandlerFunc(h.Flagged)))
 }
 
 // Queue handles GET /api/decks/{id}/study/queue: every due card in the deck,
@@ -188,6 +192,7 @@ func questionJSON(q *Question) map[string]any {
 		"question":  q.Question,
 		"answer":    q.Answer,
 		"state":     q.State.String(),
+		"flagged":   q.Flagged,
 		"counts":    countsJSON(q.Counts),
 		"previews":  previews,
 	}
@@ -252,6 +257,142 @@ func (h *Handler) Answer(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Suspend handles POST /api/cards/{id}/suspend with {"suspended": bool} —
+// one endpoint for both directions, so resume cannot drift from suspend.
+func (h *Handler) Suspend(w http.ResponseWriter, r *http.Request) {
+	u := auth.UserFromContext(r.Context())
+	cardID, ok := httpx.PathID(r, "id")
+	if !ok {
+		httpx.WriteError(w, http.StatusNotFound, "card not found")
+		return
+	}
+
+	var req struct {
+		Suspended bool `json:"suspended"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := h.svc.SetSuspended(r.Context(), u.ID, cardID, req.Suspended); err != nil {
+		writeStudyError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"card_id":   cardID,
+		"suspended": req.Suspended,
+	})
+}
+
+// MaxFlagReasonLen bounds the flag reason: a note to your future self, not an
+// essay.
+const MaxFlagReasonLen = 2000
+
+// Flag handles POST /api/cards/{id}/flag with {"flagged": bool, "reason": "…"}.
+// The reason is optional and only kept while the card stays flagged.
+func (h *Handler) Flag(w http.ResponseWriter, r *http.Request) {
+	u := auth.UserFromContext(r.Context())
+	cardID, ok := httpx.PathID(r, "id")
+	if !ok {
+		httpx.WriteError(w, http.StatusNotFound, "card not found")
+		return
+	}
+
+	var req struct {
+		Flagged bool   `json:"flagged"`
+		Reason  string `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if len(req.Reason) > MaxFlagReasonLen {
+		httpx.WriteError(w, http.StatusBadRequest, "flag reason is too long")
+		return
+	}
+
+	if err := h.svc.Flag(r.Context(), u.ID, cardID, req.Flagged, req.Reason); err != nil {
+		writeStudyError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"card_id": cardID,
+		"flagged": req.Flagged,
+	})
+}
+
+// Bury handles POST /api/cards/{id}/bury with {"days": n}: 1 hides the card
+// until tomorrow, n until n-1 days after that, 0 unburies. Days are the
+// user's own (via tz_offset), so "tomorrow" is their tomorrow.
+func (h *Handler) Bury(w http.ResponseWriter, r *http.Request) {
+	u := auth.UserFromContext(r.Context())
+	cardID, ok := httpx.PathID(r, "id")
+	if !ok {
+		httpx.WriteError(w, http.StatusNotFound, "card not found")
+		return
+	}
+
+	var req struct {
+		Days int `json:"days"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	until, err := h.svc.Bury(r.Context(), u.ID, cardID, req.Days, h.horizon(r))
+	if err != nil {
+		writeStudyError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"card_id":      cardID,
+		"buried_until": nullableTimeJSON(until),
+	})
+}
+
+// Flagged handles GET /api/decks/{id}/flagged: the deck's flagged cards with
+// their reasons — the one place the reason is ever sent to the client.
+func (h *Handler) Flagged(w http.ResponseWriter, r *http.Request) {
+	u := auth.UserFromContext(r.Context())
+	deckID, ok := httpx.PathID(r, "id")
+	if !ok {
+		httpx.WriteError(w, http.StatusNotFound, "deck not found")
+		return
+	}
+
+	list, err := h.svc.FlaggedCards(r.Context(), u.ID, deckID)
+	if err != nil {
+		writeStudyError(w, err)
+		return
+	}
+
+	out := make([]map[string]any, 0, len(list))
+	for _, c := range list {
+		out = append(out, map[string]any{
+			"card_id":      c.CardID,
+			"note_id":      c.NoteID,
+			"template":     c.Template,
+			"question":     c.Question,
+			"reason":       c.Reason,
+			"suspended":    c.Suspended,
+			"buried_until": nullableTimeJSON(c.BuriedUntil),
+			"state":        c.State.String(),
+			"due":          c.Due,
+		})
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"cards": out})
+}
+
+// nullableTimeJSON renders a time as JSON null when it is the zero value.
+func nullableTimeJSON(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t
+}
+
 func countsJSON(c cards.Counts) map[string]any {
 	return map[string]any{
 		"new":      c.New,
@@ -272,6 +413,8 @@ func writeStudyError(w http.ResponseWriter, err error) {
 		httpx.WriteError(w, http.StatusConflict, "this card was already answered")
 	case errors.Is(err, ErrCardSuspended):
 		httpx.WriteError(w, http.StatusConflict, "this card is suspended")
+	case errors.Is(err, ErrBadBuryDays):
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ErrQueueEmpty):
 		w.WriteHeader(http.StatusNoContent)
 	default:

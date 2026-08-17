@@ -62,6 +62,14 @@ the two apps look and feel like siblings.
   09:00 session — while learning steps keep their exact intra-day timing.
   Due learning and review cards are always served before new cards, so a
   freshly authored batch cannot starve the reviews scheduled for today.
+- **Suspend, bury, flag.** From the study screen or the deck's card list, a
+  card can be suspended (out of the queue indefinitely, history intact),
+  buried (hidden until tomorrow, or for a chosen number of days — it comes
+  back on its own), or flagged with a free-text reason. Flagging offers to
+  suspend in the same breath and vice versa, so "set this aside, and here's
+  why" is one action. Each deck has a flagged-cards view — the only place
+  the reasons appear — where flags, suspensions and burials can be lifted.
+  All three actions work offline, parked in the outbox like answers.
 - **Undo.** The most recent answer can be taken back — the card returns,
   revealed, ready to be graded properly. Repeat to step further back.
 - **Keyboard review.** Space reveals, 1–4 grade (space again for Good, with a

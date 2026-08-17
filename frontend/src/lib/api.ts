@@ -41,6 +41,9 @@ export interface CardSummary {
 	reps: number;
 	lapses: number;
 	suspended: boolean;
+	flagged: boolean;
+	/** When a buried card returns to the queue; null when not buried. */
+	buried_until: string | null;
 }
 
 export interface Note {
@@ -89,8 +92,25 @@ export interface StudyCard {
 	question: string;
 	answer: string;
 	state: string;
+	/** The flag rides along for the icon; the reason deliberately does not —
+	 * it is only shown in the flagged-cards view. */
+	flagged: boolean;
 	counts: QueueCounts;
 	previews: Record<string, AnswerPreview>;
+}
+
+/** One entry in a deck's flagged-cards view — the only place the reason is
+ * ever sent to the client. */
+export interface FlaggedCard {
+	card_id: number;
+	note_id: number;
+	template: string;
+	question: string;
+	reason: string;
+	suspended: boolean;
+	buried_until: string | null;
+	state: string;
+	due: string;
 }
 
 /** A whole study session's worth of cards, fetched in one go. */
@@ -300,6 +320,29 @@ export const api = {
 	 * again. Null when there is nothing to undo (the server answers 204).
 	 */
 	undoAnswer: () => postJSON<StudyCard | null>(`/api/study/undo?${tzQuery()}`, {}),
+
+	// ── Card management ─────────────────────────────────────────────────────
+	suspendCard: (cardId: number, suspended: boolean) =>
+		postJSON<{ card_id: number; suspended: boolean }>(`/api/cards/${cardId}/suspend`, {
+			suspended,
+		}),
+	/** The reason is only kept while the card stays flagged. */
+	flagCard: (cardId: number, flagged: boolean, reason = '') =>
+		postJSON<{ card_id: number; flagged: boolean }>(`/api/cards/${cardId}/flag`, {
+			flagged,
+			reason,
+		}),
+	/**
+	 * Buries the card for `days` of the user's own days: 1 hides it until
+	 * tomorrow, n until n-1 midnights after that, 0 unburies.
+	 */
+	buryCard: (cardId: number, days: number) =>
+		postJSON<{ card_id: number; buried_until: string | null }>(
+			`/api/cards/${cardId}/bury?${tzQuery()}`,
+			{ days },
+		),
+	flaggedCards: (deckId: number) =>
+		request<{ cards: FlaggedCard[] }>(`/api/decks/${deckId}/flagged`),
 
 	// ── Images ──────────────────────────────────────────────────────────────
 	/**

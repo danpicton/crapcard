@@ -12,6 +12,7 @@ function card(overrides: Partial<StudyCard> = {}): StudyCard {
 		question: 'ciao',
 		answer: 'hello',
 		state: 'new',
+		flagged: false,
 		counts: { new: 2, learning: 0, due: 0, total: 2 },
 		previews: {
 			again: { interval_seconds: 60, label: '1m', due: '' },
@@ -50,7 +51,13 @@ function testDeps() {
 		fetchQueue: vi.fn().mockResolvedValue(studyQueue([card()])),
 		answerCard: vi.fn().mockResolvedValue(answerResult()),
 		undoAnswer: vi.fn().mockResolvedValue(card()),
+		suspendCard: vi.fn().mockResolvedValue({ card_id: 1, suspended: true }),
+		flagCard: vi.fn().mockResolvedValue({ card_id: 1, flagged: true }),
+		buryCard: vi.fn().mockResolvedValue({ card_id: 1, buried_until: null }),
 		queueAnswer: vi.fn().mockReturnValue('outbox-1'),
+		queueSuspend: vi.fn(),
+		queueFlag: vi.fn(),
+		queueBury: vi.fn(),
 		removeQueuedAnswer: vi.fn().mockReturnValue(true),
 		flushOutbox: vi.fn().mockResolvedValue(undefined),
 	};
@@ -403,5 +410,116 @@ describe('study session while offline', () => {
 
 		expect(order).toEqual(['flush', 'fetch']);
 		expect(s.card?.card_id).toBe(2);
+	});
+});
+
+describe('card actions during study', () => {
+	let deps: ReturnType<typeof testDeps>;
+
+	beforeEach(() => {
+		localStorage.clear();
+		deps = testDeps();
+	});
+
+	it('flagging alone marks the card and keeps it in the session', async () => {
+		deps.fetchQueue.mockResolvedValue(studyQueue([card(), card({ card_id: 2 })]));
+		const s = createSession(1, deps);
+		await s.start();
+
+		await s.setFlag(true, 'dubious answer');
+		expect(deps.flagCard).toHaveBeenCalledWith(1, true, 'dubious answer');
+		expect(deps.suspendCard).not.toHaveBeenCalled();
+		expect(s.card?.card_id).toBe(1);
+		expect(s.card?.flagged).toBe(true);
+		expect(s.remaining).toBe(2);
+	});
+
+	it('flag with suspend removes the card without grading it', async () => {
+		deps.fetchQueue.mockResolvedValue(studyQueue([card(), card({ card_id: 2 })]));
+		const s = createSession(1, deps);
+		await s.start();
+		s.reveal();
+
+		await s.setFlag(true, 'needs a rewrite', true);
+		expect(deps.flagCard).toHaveBeenCalledWith(1, true, 'needs a rewrite');
+		expect(deps.suspendCard).toHaveBeenCalledWith(1, true);
+		expect(deps.answerCard).not.toHaveBeenCalled();
+		expect(s.card?.card_id).toBe(2);
+		expect(s.revealed).toBe(false);
+	});
+
+	it('suspend with a reason flags too, so the reason survives to the flagged view', async () => {
+		deps.fetchQueue.mockResolvedValue(studyQueue([card(), card({ card_id: 2 })]));
+		const s = createSession(1, deps);
+		await s.start();
+
+		await s.suspend('too niche for now');
+		expect(deps.flagCard).toHaveBeenCalledWith(1, true, 'too niche for now');
+		expect(deps.suspendCard).toHaveBeenCalledWith(1, true);
+		expect(s.card?.card_id).toBe(2);
+	});
+
+	it('suspend without a reason never flags', async () => {
+		const s = createSession(1, deps);
+		await s.start();
+
+		await s.suspend();
+		expect(deps.flagCard).not.toHaveBeenCalled();
+		expect(deps.suspendCard).toHaveBeenCalledWith(1, true);
+	});
+
+	it('bury removes the card, including its requeued learning copy', async () => {
+		deps.fetchQueue.mockResolvedValue(studyQueue([card(), card({ card_id: 2 })]));
+		deps.answerCard.mockResolvedValue(answerResult({ interval_seconds: 60 }));
+		const s = createSession(1, deps);
+		await s.start();
+
+		// Answer card 1 with a short interval so a copy requeues behind card 2,
+		// then bury card 2 — only card 1's copy should remain.
+		s.reveal();
+		await s.answer(1);
+		expect(s.card?.card_id).toBe(2);
+		await s.bury(3);
+		expect(deps.buryCard).toHaveBeenCalledWith(2, 3);
+		expect(s.card?.card_id).toBe(1);
+		expect(s.remaining).toBe(1);
+	});
+
+	it('rejects a bury of less than one day', async () => {
+		const s = createSession(1, deps);
+		await s.start();
+		await s.bury(0);
+		expect(deps.buryCard).not.toHaveBeenCalled();
+		expect(s.remaining).toBe(1);
+	});
+
+	it('parks the actions in the outbox when the network is away', async () => {
+		deps.flagCard.mockRejectedValue(networkDown);
+		deps.suspendCard.mockRejectedValue(networkDown);
+		deps.fetchQueue.mockResolvedValue(studyQueue([card(), card({ card_id: 2 })]));
+		const s = createSession(1, deps);
+		await s.start();
+
+		await s.setFlag(true, 'check later', true);
+		expect(deps.queueFlag).toHaveBeenCalledWith(1, true, 'check later');
+		expect(deps.queueSuspend).toHaveBeenCalledWith(1, true);
+		// The session moves on exactly as it would online.
+		expect(s.card?.card_id).toBe(2);
+
+		deps.buryCard.mockRejectedValue(networkDown);
+		await s.bury(1);
+		expect(deps.queueBury).toHaveBeenCalledWith(2, 1);
+		expect(s.remaining).toBe(0);
+	});
+
+	it('keeps the card and reports a server rejection', async () => {
+		deps.suspendCard.mockRejectedValue(new ApiError(500, 'server exploded'));
+		const s = createSession(1, deps);
+		await s.start();
+
+		await s.suspend();
+		expect(s.error).toBe('server exploded');
+		expect(s.card?.card_id).toBe(1);
+		expect(deps.queueSuspend).not.toHaveBeenCalled();
 	});
 });
