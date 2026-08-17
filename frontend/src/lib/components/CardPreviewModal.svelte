@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { api, type CardPreview } from '$lib/api';
+	import { templateLabel } from '$lib/cloze';
 	import Editor from '$lib/components/Editor.svelte';
 	import BidirectionalIcon from '$lib/components/BidirectionalIcon.svelte';
+	import ClozeIcon from '$lib/components/ClozeIcon.svelte';
 
 	/**
 	 * Shows every card a note produces, exactly as review will ask them —
@@ -49,11 +51,12 @@
 		if (event.key === 'Escape') onclose();
 	}
 
-	function label(template: string): string {
-		if (template === 'forward') return 'Front → back';
-		if (template === 'reverse') return 'Back → front';
-		return template;
-	}
+	const label = templateLabel;
+
+	// Which glyph explains why this note has several cards.
+	const isCloze = $derived(
+		(cards ?? []).some((c) => c.template.startsWith('cloze:') || c.template.startsWith('occ:')),
+	);
 </script>
 
 <svelte:window onkeydown={onKeydown} />
@@ -82,7 +85,9 @@
 		{:else}
 			{#if cards.length > 1}
 				<div class="card-tabs" role="tablist" aria-label="Cards of this note">
-					<span class="note-kind muted small"><BidirectionalIcon /></span>
+					<span class="note-kind muted small">
+						{#if isCloze}<ClozeIcon />{:else}<BidirectionalIcon />{/if}
+					</span>
 					{#each cards as card, i (card.template)}
 						<button
 							type="button"

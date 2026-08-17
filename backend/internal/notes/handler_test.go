@@ -269,8 +269,8 @@ func TestNoteTypesEndpointAdvertisesWhatIsImplemented(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(got) != 1 || got[0].Type != "basic" {
-		t.Fatalf("note types = %s, want just basic", rec.Body.String())
+	if len(got) != len(notes.KnownTypes()) || got[0].Type != "basic" {
+		t.Fatalf("note types = %s, want one entry per known type, basic first", rec.Body.String())
 	}
 	if len(got[0].Fields) != 2 || got[0].Fields[0] != "front" || got[0].Fields[1] != "back" {
 		t.Fatalf("basic fields = %v", got[0].Fields)

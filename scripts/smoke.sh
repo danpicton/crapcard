@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Drives the whole product against a built binary: sign up, create a deck,
-# author a reversed note, study both cards, and confirm the queue empties.
+# author a reversed note, study both cards, confirm the queue empties, and
+# author cloze notes — text and image — checking their rendered cards.
 #
 # This exercises the one thing the unit suites cannot — the real artefact,
 # with the frontend embedded and every route wired together.
@@ -72,6 +73,20 @@ NEXT=$(api "${BASE}/api/decks/${DECK}/study/next" | json '["card_id"]')
 [[ "$NEXT" == "$CARD" ]] || { echo "queue serves ${NEXT} after undo, want ${CARD}"; exit 1; }
 api -X POST "${BASE}/api/cards/${CARD}/answer" -H 'Content-Type: application/json' \
 	-d '{"rating":4}' >/dev/null
+
+echo "→ author a cloze note (one card per deletion, blanks rendered)"
+CLOZE=$(api -X POST "${BASE}/api/notes" -H 'Content-Type: application/json' \
+	-d "{\"deck_id\":${DECK},\"type\":\"cloze\",\"fields\":{\"front\":\"{{c1::Ottawa}} is in {{c2::Canada}}.\",\"back\":\"\"}}" | json '["id"]')
+CLOZE_CARDS=$(api "${BASE}/api/notes/${CLOZE}/preview" | json '.__len__()')
+[[ "$CLOZE_CARDS" == "2" ]] || { echo "expected 2 cloze cards, got ${CLOZE_CARDS}"; exit 1; }
+Q1=$(api "${BASE}/api/notes/${CLOZE}/preview" | json '[0]["question"]')
+[[ "$Q1" == "[...] is in Canada." ]] || { echo "cloze question rendered as: ${Q1}"; exit 1; }
+
+echo "→ a text edit converts the note to image cloze, masks and all"
+api -X PUT "${BASE}/api/notes/${CLOZE}" -H 'Content-Type: application/json' \
+	-d "{\"deck_id\":${DECK},\"type\":\"image-cloze\",\"fields\":{\"front\":\"![cow](/api/images/abc)\",\"back\":\"\"},\"occlusion\":{\"mode\":\"hide-all\",\"rects\":[{\"id\":1,\"x\":0.1,\"y\":0.1,\"w\":0.2,\"h\":0.1}]}}" >/dev/null
+OCCQ=$(api "${BASE}/api/notes/${CLOZE}/preview" | json '[0]["question"]')
+[[ "$OCCQ" == *"#occ="* ]] || { echo "image cloze question carries no masks: ${OCCQ}"; exit 1; }
 
 echo "→ unauthenticated access is refused"
 CODE=$(curl -s -o /dev/null -w '%{http_code}' "${BASE}/api/decks")

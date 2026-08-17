@@ -134,11 +134,11 @@ func TestUploadRejectsNonImageContent(t *testing.T) {
 	e := newEnv(t)
 
 	cases := map[string][]byte{
-		"text":     []byte("just some text, definitely not a png"),
-		"elf":      {0x7f, 'E', 'L', 'F', 2, 1, 1, 0, 0, 0, 0, 0},
-		"html":     []byte("<html><script>alert(1)</script></html>"),
-		"empty":    {},
-		"svg xml":  []byte(`<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`),
+		"text":    []byte("just some text, definitely not a png"),
+		"elf":     {0x7f, 'E', 'L', 'F', 2, 1, 1, 0, 0, 0, 0, 0},
+		"html":    []byte("<html><script>alert(1)</script></html>"),
+		"empty":   {},
+		"svg xml": []byte(`<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`),
 	}
 
 	for name, body := range cases {

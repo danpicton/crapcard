@@ -20,14 +20,15 @@ type NoteType string
 
 // TypeBasic is a two-sided note with a front and a back, optionally reversed
 // into a second card.
-//
-// Text and image cloze will join it as TypeCloze and TypeImageCloze; they are
-// deliberately absent rather than stubbed, so GeneratorFor rejects them until
-// they genuinely work.
 const TypeBasic NoteType = "basic"
 
+// TypeCloze is a note whose front carries {{c1::…}} deletions, one card per
+// deletion number. The back, when present, is extra context shown with the
+// answer.
+const TypeCloze NoteType = "cloze"
+
 // Card templates. A template names one card a note produces; it is stored on
-// the card row and handed back to Render at review time. Cloze will add
+// the card row and handed back to Render at review time. Cloze adds
 // per-deletion templates of the form "cloze:1", "cloze:2", ...
 const (
 	TemplateForward = "forward"
@@ -47,6 +48,9 @@ type Field struct {
 type Config struct {
 	// Reversed asks a basic note for a second card testing back to front.
 	Reversed bool `json:"reversed"`
+	// Occlusion carries an image-cloze note's masks. Nil for other types;
+	// omitempty keeps stored configs of older notes byte-identical.
+	Occlusion *Occlusion `json:"occlusion,omitempty"`
 }
 
 // CardSpec describes one card a note should produce.
@@ -83,7 +87,29 @@ type Generator interface {
 // generators is the note type registry. Adding a type is a matter of adding
 // an entry here.
 var generators = map[NoteType]Generator{
-	TypeBasic: basicGenerator{},
+	TypeBasic:      basicGenerator{},
+	TypeCloze:      clozeGenerator{},
+	TypeImageCloze: occlusionGenerator{},
+}
+
+// DetectType returns the type a note's content implies: masks make it an
+// image cloze, {{cN::…}} markers on the front make it a cloze, anything else
+// is basic. The server decides this itself rather than trusting the client's
+// declared type — a stale build or a replayed offline save must never store a
+// note whose content and type disagree, because that is what puts raw cloze
+// markup in front of the user at review.
+func DetectType(fields []Field, cfg Config) NoteType {
+	front, _ := fieldValue(fields, FieldFront)
+	// Masks need an image to mask. Without one — the user deleted it
+	// mid-edit — they lie dormant rather than failing the save, ready for
+	// the image to come back.
+	if cfg.Occlusion != nil && len(cfg.Occlusion.Rects) > 0 && markdownImage.MatchString(front) {
+		return TypeImageCloze
+	}
+	if len(clozeNumbers(front)) > 0 {
+		return TypeCloze
+	}
+	return TypeBasic
 }
 
 // GeneratorFor returns the generator for a note type, or ErrUnknownNoteType.
@@ -97,7 +123,7 @@ func GeneratorFor(t NoteType) (Generator, error) {
 
 // KnownTypes lists the registered note types, for the client to offer.
 func KnownTypes() []NoteType {
-	return []NoteType{TypeBasic}
+	return []NoteType{TypeBasic, TypeCloze, TypeImageCloze}
 }
 
 // fieldValue looks up a field by name.

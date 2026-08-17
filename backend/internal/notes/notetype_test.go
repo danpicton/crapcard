@@ -93,8 +93,8 @@ func TestBasicNoteRejectsUnknownFields(t *testing.T) {
 }
 
 func TestUnknownNoteTypeIsRejected(t *testing.T) {
-	if _, err := notes.GeneratorFor(notes.NoteType("cloze")); !errors.Is(err, notes.ErrUnknownNoteType) {
-		t.Fatalf("GeneratorFor(cloze) = %v, want ErrUnknownNoteType (not yet implemented)", err)
+	if _, err := notes.GeneratorFor(notes.NoteType("sideways")); !errors.Is(err, notes.ErrUnknownNoteType) {
+		t.Fatalf("GeneratorFor(sideways) = %v, want ErrUnknownNoteType", err)
 	}
 	if _, err := notes.GeneratorFor(notes.NoteType("")); !errors.Is(err, notes.ErrUnknownNoteType) {
 		t.Fatalf("GeneratorFor(\"\") = %v, want ErrUnknownNoteType", err)

@@ -32,7 +32,7 @@ describe('sync store', () => {
 
 		const s = createSyncStore(deps);
 		s.queueAnswer(1, 3);
-		s.queueNoteUpdate(7, { deck_id: 1, reversed: false, fields: {} });
+		s.queueNoteUpdate(7, { deck_id: 1, type: 'basic', reversed: false, fields: {} });
 		s.queueAnswer(2, 4);
 		await s.flush();
 
@@ -42,8 +42,8 @@ describe('sync store', () => {
 
 	it('coalesces repeated saves of the same note into one entry', () => {
 		const s = createSyncStore(testDeps());
-		s.queueNoteUpdate(7, { deck_id: 1, reversed: false, fields: { front: 'a', back: 'b' } });
-		s.queueNoteUpdate(7, { deck_id: 1, reversed: false, fields: { front: 'ab', back: 'b' } });
+		s.queueNoteUpdate(7, { deck_id: 1, type: 'basic', reversed: false, fields: { front: 'a', back: 'b' } });
+		s.queueNoteUpdate(7, { deck_id: 1, type: 'basic', reversed: false, fields: { front: 'ab', back: 'b' } });
 
 		expect(s.pending).toBe(1);
 	});

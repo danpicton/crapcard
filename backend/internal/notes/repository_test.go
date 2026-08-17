@@ -110,9 +110,9 @@ func TestCreateRejectsUnknownNoteType(t *testing.T) {
 	e := newRepoEnv(t)
 
 	in := basicInput(e.deck, "a", "b", false)
-	in.Type = "cloze"
+	in.Type = "sideways"
 	if _, err := e.repo.Create(context.Background(), e.user, in); !errors.Is(err, notes.ErrUnknownNoteType) {
-		t.Fatalf("Create with note type cloze = %v, want ErrUnknownNoteType", err)
+		t.Fatalf("Create with note type sideways = %v, want ErrUnknownNoteType", err)
 	}
 }
 

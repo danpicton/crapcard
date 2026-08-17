@@ -2,6 +2,8 @@
  * Helpers for showing notes in a list.
  */
 
+import { stripClozeMarkers } from './cloze';
+
 const MAX_SUMMARY_LENGTH = 80;
 
 /**
@@ -17,7 +19,9 @@ const MAX_SUMMARY_LENGTH = 80;
 export function summariseMarkdown(value: string): string {
 	const line = value.split('\n').find((l) => l.trim() !== '') ?? '';
 
-	const flattened = line
+	// Cloze markers flatten to their answer text before anything else: the
+	// list shows what the note says, not how it is tested.
+	const flattened = stripClozeMarkers(line)
 		// Images first, so their alt text is not mistaken for link text. An
 		// undescribed image says so explicitly — that is how you notice.
 		.replace(/!\[([^\]]*)\]\([^)]*\)/g, (_match, alt: string) =>

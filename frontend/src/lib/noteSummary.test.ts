@@ -2,6 +2,12 @@ import { describe, it, expect } from 'vitest';
 import { summariseMarkdown, pageSizeOptionsFor } from './noteSummary';
 
 describe('summariseMarkdown', () => {
+	it('flattens cloze markers to their answer text', () => {
+		expect(summariseMarkdown('{{c1::Ottawa}} is in {{c2::Canada::country}}.')).toBe(
+			'Ottawa is in Canada.',
+		);
+	});
+
 	it('strips emphasis so a list row reads as prose', () => {
 		expect(summariseMarkdown('Bone **7**?')).toBe('Bone 7?');
 		expect(summariseMarkdown('a *word* and _another_')).toBe('a word and another');

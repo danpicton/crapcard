@@ -57,8 +57,12 @@ type noteRequest struct {
 	// existing setting. Decoding it as a plain bool would read "omitted" as
 	// false — and flipping reversed off deletes the reverse card along with
 	// its entire review history.
-	Reversed *bool             `json:"reversed"`
-	Fields   map[string]string `json:"fields"`
+	Reversed *bool `json:"reversed"`
+	// Occlusion is a pointer for the same reason: an update that omits it
+	// keeps the note's masks — wiping them would delete every mask card's
+	// review history.
+	Occlusion *Occlusion        `json:"occlusion"`
+	Fields    map[string]string `json:"fields"`
 }
 
 // fieldsInTypeOrder converts the request's field map into the order the note
@@ -128,17 +132,26 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The declared type is only validated, never trusted: an unknown name is
+	// a client bug worth a 400, but the stored type comes from the content
+	// itself, so no client path can save markers or masks into a note that
+	// would render them as raw markup.
 	gen, err := GeneratorFor(NoteType(req.Type))
 	if err != nil {
 		writeNoteError(w, err)
 		return
 	}
+	cfg := Config{
+		Reversed:  req.Reversed != nil && *req.Reversed,
+		Occlusion: req.Occlusion,
+	}
+	fields := fieldsInTypeOrder(gen, req.Fields)
 
 	n, err := h.repo.Create(r.Context(), u.ID, CreateInput{
 		DeckID: req.DeckID,
-		Type:   NoteType(req.Type),
-		Config: Config{Reversed: req.Reversed != nil && *req.Reversed},
-		Fields: fieldsInTypeOrder(gen, req.Fields),
+		Type:   DetectType(fields, cfg),
+		Config: cfg,
+		Fields: fields,
 	})
 	if err != nil {
 		writeNoteError(w, err)
@@ -274,16 +287,21 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		writeNoteError(w, err)
 		return
 	}
-	gen, err := GeneratorFor(existing.Type)
-	if err != nil {
-		writeNoteError(w, err)
-		return
-	}
 
 	var req noteRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
+	}
+	// A declared type is validated but not trusted (see Create); the stored
+	// type is re-detected from the edited content, so adding a cloze to a
+	// basic note converts it in place — and removing the last one converts
+	// it back — no matter which client sent the edit.
+	if req.Type != "" {
+		if _, err := GeneratorFor(NoteType(req.Type)); err != nil {
+			writeNoteError(w, err)
+			return
+		}
 	}
 	if req.DeckID == 0 {
 		req.DeckID = existing.DeckID
@@ -292,11 +310,25 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	if req.Reversed != nil {
 		reversed = *req.Reversed
 	}
+	occlusion := existing.Config.Occlusion
+	if req.Occlusion != nil {
+		occlusion = req.Occlusion
+	}
+	cfg := Config{Reversed: reversed, Occlusion: occlusion}
+	// Every type shares the front/back field set, so ordering does not
+	// depend on which type wins detection.
+	gen, err := GeneratorFor(existing.Type)
+	if err != nil {
+		writeNoteError(w, err)
+		return
+	}
+	fields := fieldsInTypeOrder(gen, req.Fields)
 
 	n, err := h.repo.Update(r.Context(), u.ID, id, UpdateInput{
 		DeckID: req.DeckID,
-		Config: Config{Reversed: reversed},
-		Fields: fieldsInTypeOrder(gen, req.Fields),
+		Type:   DetectType(fields, cfg),
+		Config: cfg,
+		Fields: fields,
 	})
 	if err != nil {
 		writeNoteError(w, err)
@@ -340,10 +372,12 @@ func publicNote(n *Note, list []*cards.Card) map[string]any {
 	}
 
 	out := map[string]any{
-		"id":         n.ID,
-		"deck_id":    n.DeckID,
-		"type":       string(n.Type),
-		"reversed":   n.Config.Reversed,
+		"id":       n.ID,
+		"deck_id":  n.DeckID,
+		"type":     string(n.Type),
+		"reversed": n.Config.Reversed,
+		// Null for notes without masks, so old clients see nothing new.
+		"occlusion":  n.Config.Occlusion,
 		"fields":     f,
 		"created_at": n.CreatedAt,
 		"updated_at": n.UpdatedAt,

@@ -1,7 +1,7 @@
 <script lang="ts">
 	/**
-	 * Marks a note that generates a card in each direction. Used on the note
-	 * list, where a label would crowd the row.
+	 * Marks a cloze note — one row in the list, several cards behind it. Same
+	 * role as BidirectionalIcon: a glyph where a label would crowd the row.
 	 */
 	interface Props {
 		/** Shown as a tooltip and to assistive technology. */
@@ -9,7 +9,7 @@
 		size?: number;
 	}
 
-	let { title = 'Bidirectional', size = 14 }: Props = $props();
+	let { title = 'Cloze', size = 14 }: Props = $props();
 </script>
 
 <span class="icon" {title} role="img" aria-label={title}>
@@ -24,11 +24,10 @@
 		stroke-linejoin="round"
 		aria-hidden="true"
 	>
-		<!-- Two arrows, one each way. -->
-		<path d="M4 9h16" />
-		<path d="M16 5l4 4" />
-		<path d="M20 15H4" />
-		<path d="M8 19l-4-4" />
+		<!-- Square brackets around a gap: the blank of a cloze. -->
+		<path d="M8 5H5v14h3" />
+		<path d="M16 5h3v14h-3" />
+		<circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" />
 	</svg>
 </span>
 

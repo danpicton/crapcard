@@ -17,12 +17,12 @@ const RECONNECT_PROBE_MS = 10_000;
 
 export type OutboxEntry =
 	| { id: string; kind: 'answer'; cardId: number; rating: number }
-	| { id: string; kind: 'note-update'; noteId: number; input: Omit<NoteInput, 'type'> }
+	| { id: string; kind: 'note-update'; noteId: number; input: NoteInput }
 	| { id: string; kind: 'note-create'; ref: string; input: NoteInput };
 
 interface SyncDeps {
 	answerCard: (cardId: number, rating: number) => Promise<AnswerResult>;
-	updateNote: (id: number, input: Omit<NoteInput, 'type'>) => Promise<Note>;
+	updateNote: (id: number, input: NoteInput) => Promise<Note>;
 	createNote: (input: NoteInput) => Promise<Note>;
 	/** A cheap reachability check — anything that resolves means online. */
 	ping: () => Promise<void>;
@@ -217,7 +217,7 @@ export function createSyncStore(deps: SyncDeps = defaultDeps) {
 
 		/** Queue a note save, replacing any earlier queued save of the same
 		 * note — only the newest content matters. */
-		queueNoteUpdate(noteId: number, input: Omit<NoteInput, 'type'>) {
+		queueNoteUpdate(noteId: number, input: NoteInput) {
 			const existing = outbox.findIndex(
 				(e) => e.kind === 'note-update' && e.noteId === noteId,
 			);

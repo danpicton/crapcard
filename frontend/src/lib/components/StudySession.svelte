@@ -189,9 +189,7 @@
 					class="answer-button {answer.key}"
 					disabled={session.submitting}
 					onclick={() => session.answer(answer.rating)}
-					title="{answer.label} — press [{answer.rating}]{answer.key === 'good'
-						? ' or space'
-						: ''}"
+					title="{answer.label} ({answer.rating}{answer.key === 'good' ? ' or space' : ''})"
 				>
 					<span class="answer-label">{answer.label}</span>
 					<span class="answer-interval">
@@ -209,14 +207,14 @@
 					class="link undo"
 					disabled={session.submitting}
 					onclick={() => session.undo()}
-					title="Take back the last answer — press [U]"
+					title="Undo (U)"
 				>
 					Undo
 				</button>
 			</div>
 		{/if}
 	{:else}
-		<button type="button" class="primary reveal" onclick={reveal} title="Press [space]">
+		<button type="button" class="primary reveal" onclick={reveal} title="Show answer (space)">
 			Show answer
 		</button>
 		{#if session.canUndo}
@@ -226,7 +224,7 @@
 					class="link undo"
 					disabled={session.submitting}
 					onclick={() => session.undo()}
-					title="Take back the last answer — press [U]"
+					title="Undo (U)"
 				>
 					Undo
 				</button>
