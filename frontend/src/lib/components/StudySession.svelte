@@ -194,9 +194,89 @@
 		</div>
 	</div>
 {:else if session.card}
+	<!-- Keyed on the card so the editor remounts with new content: Milkdown
+	     takes its value at creation time and does not track prop changes. -->
+	{#key session.card.card_id}
+		<article class="card-face">
+			<Editor value={session.card.question} readonly />
+		</article>
+
+		{#if session.revealed}
+			<hr />
+			<article class="card-face answer">
+				<Editor value={session.card.answer} readonly />
+			</article>
+		{/if}
+	{/key}
+
+	{#if session.revealed}
+		<div class="answers">
+			{#each answers as answer (answer.key)}
+				<button
+					type="button"
+					class="answer-button {answer.key}"
+					disabled={session.submitting}
+					onclick={() => session.answer(answer.rating)}
+					title="{answer.label} ({answer.rating}{answer.key === 'good' ? ' or space' : ''})"
+				>
+					<span class="answer-label">{answer.label}</span>
+					<span class="answer-interval">
+						<!-- A regraded card's previews were computed from state it
+						     no longer has; better no label than a wrong one. -->
+						{session.card?.stale_previews ? '' : (session.card?.previews[answer.key]?.label ?? '')}
+					</span>
+				</button>
+			{/each}
+		</div>
+		{#if session.canUndo}
+			<div class="under-answers">
+				<button
+					type="button"
+					class="link undo"
+					disabled={session.submitting}
+					onclick={() => session.undo()}
+					title="Undo (U)"
+				>
+					Undo
+				</button>
+			</div>
+		{/if}
+	{:else}
+		<div class="reveal-row">
+			{#if session.canUndo}
+				<button
+					type="button"
+					class="undo-button"
+					disabled={session.submitting}
+					onclick={() => session.undo()}
+					title="Undo (U)"
+					aria-label="Undo"
+				>
+					<svg
+						width="18"
+						height="18"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						aria-hidden="true"
+					>
+						<path d="M9 14 4 9l5-5" />
+						<path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
+					</svg>
+				</button>
+			{/if}
+			<button type="button" class="primary reveal" onclick={reveal} title="Show answer (space)">
+				Show answer
+			</button>
+		</div>
+	{/if}
+
 	<!-- Housekeeping actions for the card in front of you: annotate it or set
-	     it aside without grading it. Deliberately quiet — grading is the job,
-	     these are the exceptions. -->
+	     it aside without grading it. Below the grading controls — those are
+	     the job, these are the exceptions. -->
 	<div class="card-tools">
 		<!-- Editing happens on the note, in the deck page's composer; the
 		     return param brings the session back afterwards. -->
@@ -254,72 +334,6 @@
 			Bury…
 		</button>
 	</div>
-
-	<!-- Keyed on the card so the editor remounts with new content: Milkdown
-	     takes its value at creation time and does not track prop changes. -->
-	{#key session.card.card_id}
-		<article class="card-face">
-			<Editor value={session.card.question} readonly />
-		</article>
-
-		{#if session.revealed}
-			<hr />
-			<article class="card-face answer">
-				<Editor value={session.card.answer} readonly />
-			</article>
-		{/if}
-	{/key}
-
-	{#if session.revealed}
-		<div class="answers">
-			{#each answers as answer (answer.key)}
-				<button
-					type="button"
-					class="answer-button {answer.key}"
-					disabled={session.submitting}
-					onclick={() => session.answer(answer.rating)}
-					title="{answer.label} ({answer.rating}{answer.key === 'good' ? ' or space' : ''})"
-				>
-					<span class="answer-label">{answer.label}</span>
-					<span class="answer-interval">
-						<!-- A regraded card's previews were computed from state it
-						     no longer has; better no label than a wrong one. -->
-						{session.card?.stale_previews ? '' : (session.card?.previews[answer.key]?.label ?? '')}
-					</span>
-				</button>
-			{/each}
-		</div>
-		{#if session.canUndo}
-			<div class="under-answers">
-				<button
-					type="button"
-					class="link undo"
-					disabled={session.submitting}
-					onclick={() => session.undo()}
-					title="Undo (U)"
-				>
-					Undo
-				</button>
-			</div>
-		{/if}
-	{:else}
-		<button type="button" class="primary reveal" onclick={reveal} title="Show answer (space)">
-			Show answer
-		</button>
-		{#if session.canUndo}
-			<div class="under-answers">
-				<button
-					type="button"
-					class="link undo"
-					disabled={session.submitting}
-					onclick={() => session.undo()}
-					title="Undo (U)"
-				>
-					Undo
-				</button>
-			</div>
-		{/if}
-	{/if}
 {/if}
 
 {#if cardModal !== null}
@@ -332,7 +346,7 @@
 		align-items: center;
 		justify-content: flex-end;
 		gap: 0.75rem;
-		margin-bottom: 0.375rem;
+		margin-top: 0.75rem;
 	}
 
 	.session-head {
@@ -460,10 +474,39 @@
 		color: var(--text-3);
 	}
 
-	.reveal {
-		width: 100%;
+	.reveal-row {
+		display: flex;
+		align-items: stretch;
+		gap: 0.5rem;
 		margin-top: 1.5rem;
+	}
+
+	.reveal {
+		flex: 1;
 		padding: 0.75rem;
+	}
+
+	.undo-button {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0.75rem 1rem;
+		border: 1px solid var(--border-md);
+		border-radius: 4px;
+		background: var(--bg-alt);
+		color: var(--text-2);
+		cursor: pointer;
+	}
+
+	.undo-button:hover:not(:disabled) {
+		background: var(--bg-hover);
+		color: var(--accent-tx);
+		border-color: var(--accent);
+	}
+
+	.undo-button:disabled {
+		opacity: 0.5;
+		cursor: default;
 	}
 
 	.primary,
