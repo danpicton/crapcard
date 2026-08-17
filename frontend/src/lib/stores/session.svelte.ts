@@ -57,8 +57,15 @@ interface SessionDeps {
 	fetchQueue: (deckId: number | null) => Promise<StudyQueue | null>;
 	answerCard: (cardId: number, rating: number) => Promise<AnswerResult>;
 	undoAnswer: () => Promise<StudyCard | null>;
+	suspendCard: (cardId: number, suspended: boolean, reason: string) => Promise<unknown>;
+	flagCard: (cardId: number, flagged: boolean, reason: string) => Promise<unknown>;
+	buryCard: (cardId: number, days: number) => Promise<unknown>;
 	/** Park an answer that could not reach the server; returns its id. */
 	queueAnswer: (cardId: number, rating: number) => string;
+	/** Park a card action that could not reach the server. */
+	queueSuspend: (cardId: number, suspended: boolean, reason: string) => void;
+	queueFlag: (cardId: number, flagged: boolean, reason: string) => void;
+	queueBury: (cardId: number, days: number) => void;
 	/** Take a parked answer back; false if it already synced. */
 	removeQueuedAnswer: (id: string) => boolean;
 	/** Drain everything parked, in order. */
@@ -69,9 +76,24 @@ const defaultDeps: SessionDeps = {
 	fetchQueue: (deckId) => api.studyQueue(deckId),
 	answerCard: (cardId, rating) => api.answerCard(cardId, rating),
 	undoAnswer: () => api.undoAnswer(),
+	suspendCard: (cardId, suspended, reason) => api.suspendCard(cardId, suspended, reason),
+	flagCard: (cardId, flagged, reason) => api.flagCard(cardId, flagged, reason),
+	buryCard: (cardId, days) => api.buryCard(cardId, days),
 	queueAnswer: (cardId, rating) => {
 		sync.markOffline();
 		return sync.queueAnswer(cardId, rating);
+	},
+	queueSuspend: (cardId, suspended, reason) => {
+		sync.markOffline();
+		sync.queueSuspend(cardId, suspended, reason);
+	},
+	queueFlag: (cardId, flagged, reason) => {
+		sync.markOffline();
+		sync.queueFlag(cardId, flagged, reason);
+	},
+	queueBury: (cardId, days) => {
+		sync.markOffline();
+		sync.queueBury(cardId, days);
 	},
 	removeQueuedAnswer: (id) => sync.removeAnswer(id),
 	flushOutbox: () => sync.flush(),
@@ -274,6 +296,105 @@ export function createSession(deckId: number | null, deps: SessionDeps = default
 				if (intervalSeconds <= REQUEUE_HORIZON_S) {
 					requeue(card, Date.now() + intervalSeconds * 1000);
 				}
+				revealed = false;
+				persist();
+			} finally {
+				submitting = false;
+			}
+		},
+
+		/**
+		 * Flag or unflag the current card, optionally suspending it in the
+		 * same breath. A flag alone keeps the card in the session — it is an
+		 * annotation, not a removal — so only the icon changes; suspending
+		 * takes it out of the queue on the spot.
+		 *
+		 * Offline the actions park in the outbox like answers do.
+		 */
+		async setFlag(flagged: boolean, reason: string, alsoSuspend = false) {
+			const card = queue[0];
+			if (!card || submitting) return;
+
+			submitting = true;
+			try {
+				try {
+					await deps.flagCard(card.card_id, flagged, reason);
+					if (alsoSuspend) await deps.suspendCard(card.card_id, true, '');
+				} catch (err) {
+					if (!isNetworkFailure(err)) {
+						error = err instanceof Error ? err.message : 'could not flag the card';
+						return;
+					}
+					deps.queueFlag(card.card_id, flagged, reason);
+					if (alsoSuspend) deps.queueSuspend(card.card_id, true, '');
+				}
+				error = null;
+				if (alsoSuspend) {
+					queue = queue.filter((c) => c.card_id !== card.card_id);
+					revealed = false;
+				} else {
+					queue = queue.map((c) =>
+						c.card_id === card.card_id ? { ...c, flagged } : c,
+					);
+				}
+				persist();
+			} finally {
+				submitting = false;
+			}
+		},
+
+		/**
+		 * Suspend the current card and move on without grading it. The reason
+		 * belongs to the suspension itself, read back in the attention view;
+		 * alsoFlag additionally flags the card, at the user's discretion.
+		 */
+		async suspend(reason = '', alsoFlag = false) {
+			const card = queue[0];
+			if (!card || submitting) return;
+
+			submitting = true;
+			try {
+				try {
+					await deps.suspendCard(card.card_id, true, reason);
+					if (alsoFlag) await deps.flagCard(card.card_id, true, '');
+				} catch (err) {
+					if (!isNetworkFailure(err)) {
+						error = err instanceof Error ? err.message : 'could not suspend the card';
+						return;
+					}
+					deps.queueSuspend(card.card_id, true, reason);
+					if (alsoFlag) deps.queueFlag(card.card_id, true, '');
+				}
+				error = null;
+				queue = queue.filter((c) => c.card_id !== card.card_id);
+				revealed = false;
+				persist();
+			} finally {
+				submitting = false;
+			}
+		},
+
+		/**
+		 * Bury the current card — hide it until tomorrow (1) or for a longer
+		 * stretch — and move on without grading it.
+		 */
+		async bury(days: number) {
+			const card = queue[0];
+			if (!card || submitting || days < 1) return;
+
+			submitting = true;
+			try {
+				try {
+					await deps.buryCard(card.card_id, days);
+				} catch (err) {
+					if (!isNetworkFailure(err)) {
+						error = err instanceof Error ? err.message : 'could not bury the card';
+						return;
+					}
+					deps.queueBury(card.card_id, days);
+				}
+				error = null;
+				queue = queue.filter((c) => c.card_id !== card.card_id);
 				revealed = false;
 				persist();
 			} finally {

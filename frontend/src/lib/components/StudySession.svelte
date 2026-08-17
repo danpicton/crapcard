@@ -4,6 +4,8 @@
 	import { sync } from '$lib/stores/sync.svelte';
 	import { Rating } from '$lib/api';
 	import Editor from '$lib/components/Editor.svelte';
+	import FlagIcon from '$lib/components/FlagIcon.svelte';
+	import FlagCardModal from '$lib/components/FlagCardModal.svelte';
 
 	/**
 	 * The whole review loop as one component, shared by the landing screen
@@ -41,6 +43,30 @@
 		revealedAt = Date.now();
 	}
 
+	// Which card-action dialog is open, if any. Null while studying.
+	let cardModal = $state<'flag' | 'suspend' | null>(null);
+
+	// The reason goes to the action the dialog was opened for; the "also"
+	// action rides along without one.
+	function onCardAction(choice: { flag: boolean; reason: string; suspend: boolean }) {
+		const mode = cardModal;
+		cardModal = null;
+		if (mode === 'flag') {
+			void session.setFlag(true, choice.reason, choice.suspend);
+		} else if (mode === 'suspend') {
+			void session.suspend(choice.reason, choice.flag);
+		}
+	}
+
+	/** Bury for a stretch the user picks — "not tomorrow, but soon". */
+	function buryMore() {
+		const raw = prompt('Bury for how many days?', '3');
+		if (raw === null) return;
+		const days = Number(raw);
+		if (!Number.isInteger(days) || days < 1 || days > 365) return;
+		void session.bury(days);
+	}
+
 	onMount(() => {
 		void session.start();
 		window.addEventListener('keydown', onKeydown);
@@ -65,6 +91,8 @@
 	 * card is what makes reviewing feel like work.
 	 */
 	function onKeydown(event: KeyboardEvent) {
+		// A dialog owns the keyboard while it is open.
+		if (cardModal !== null) return;
 		const target = event.target as HTMLElement | null;
 		if (target?.isContentEditable || target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA')
 			return;
@@ -214,26 +242,113 @@
 			</div>
 		{/if}
 	{:else}
-		<button type="button" class="primary reveal" onclick={reveal} title="Show answer (space)">
-			Show answer
-		</button>
-		{#if session.canUndo}
-			<div class="under-answers">
+		<div class="reveal-row">
+			{#if session.canUndo}
 				<button
 					type="button"
-					class="link undo"
+					class="undo-button"
 					disabled={session.submitting}
 					onclick={() => session.undo()}
 					title="Undo (U)"
+					aria-label="Undo"
 				>
-					Undo
+					<svg
+						width="18"
+						height="18"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						aria-hidden="true"
+					>
+						<path d="M9 14 4 9l5-5" />
+						<path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
+					</svg>
 				</button>
-			</div>
-		{/if}
+			{/if}
+			<button type="button" class="primary reveal" onclick={reveal} title="Show answer (space)">
+				Show answer
+			</button>
+		</div>
 	{/if}
+
+	<!-- Housekeeping actions for the card in front of you: annotate it or set
+	     it aside without grading it. Below the grading controls — those are
+	     the job, these are the exceptions. -->
+	<div class="card-tools">
+		<!-- Editing happens on the note, in the deck page's composer; the
+		     return param brings the session back afterwards. -->
+		<a
+			class="link"
+			href="/decks/{session.card.deck_id}?edit={session.card
+				.note_id}&return={encodeURIComponent(deckId === null ? '/' : `/decks/${deckId}/study`)}"
+		>
+			Edit
+		</a>
+		{#if session.card.flagged}
+			<FlagIcon />
+			<button
+				type="button"
+				class="link"
+				disabled={session.submitting}
+				onclick={() => session.setFlag(false, '')}
+			>
+				Unflag
+			</button>
+		{:else}
+			<button
+				type="button"
+				class="link"
+				disabled={session.submitting}
+				onclick={() => (cardModal = 'flag')}
+			>
+				Flag
+			</button>
+		{/if}
+		<button
+			type="button"
+			class="link"
+			disabled={session.submitting}
+			onclick={() => (cardModal = 'suspend')}
+		>
+			Suspend
+		</button>
+		<button
+			type="button"
+			class="link"
+			disabled={session.submitting}
+			onclick={() => session.bury(1)}
+			title="Hide this card until tomorrow"
+		>
+			Bury
+		</button>
+		<button
+			type="button"
+			class="link"
+			disabled={session.submitting}
+			onclick={buryMore}
+			title="Hide this card for a number of days"
+		>
+			Bury…
+		</button>
+	</div>
+{/if}
+
+{#if cardModal !== null}
+	<FlagCardModal mode={cardModal} onconfirm={onCardAction} onclose={() => (cardModal = null)} />
 {/if}
 
 <style>
+	.card-tools {
+		display: flex;
+		align-items: center;
+		justify-content: flex-end;
+		gap: 0.75rem;
+		margin-top: 0.75rem;
+	}
+
 	.session-head {
 		display: flex;
 		align-items: baseline;
@@ -359,10 +474,39 @@
 		color: var(--text-3);
 	}
 
-	.reveal {
-		width: 100%;
+	.reveal-row {
+		display: flex;
+		align-items: stretch;
+		gap: 0.5rem;
 		margin-top: 1.5rem;
+	}
+
+	.reveal {
+		flex: 1;
 		padding: 0.75rem;
+	}
+
+	.undo-button {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0.75rem 1rem;
+		border: 1px solid var(--border-md);
+		border-radius: 4px;
+		background: var(--bg-alt);
+		color: var(--text-2);
+		cursor: pointer;
+	}
+
+	.undo-button:hover:not(:disabled) {
+		background: var(--bg-hover);
+		color: var(--accent-tx);
+		border-color: var(--accent);
+	}
+
+	.undo-button:disabled {
+		opacity: 0.5;
+		cursor: default;
 	}
 
 	.primary,
@@ -408,6 +552,7 @@
 		font-size: 0.8125rem;
 		cursor: pointer;
 		color: var(--text-3);
+		text-decoration: none;
 	}
 
 	.link:hover:not(:disabled) {

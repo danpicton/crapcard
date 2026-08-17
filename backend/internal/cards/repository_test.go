@@ -643,3 +643,168 @@ func TestApplyReviewRefusesADuplicateSubmit(t *testing.T) {
 		t.Fatalf("duplicate submit left %d log entries, want 1", len(logs))
 	}
 }
+
+func TestSetFlagStoresAndClearsTheReason(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+
+	list, _ := e.repo.ListForNote(ctx, e.user, e.note)
+	id := list[0].ID
+
+	if err := e.repo.SetFlag(ctx, e.user, id, true, "answer feels ambiguous"); err != nil {
+		t.Fatalf("SetFlag: %v", err)
+	}
+	c, _ := e.repo.Get(ctx, e.user, id)
+	if !c.Flagged || c.FlagReason != "answer feels ambiguous" {
+		t.Fatalf("after flagging: flagged=%v reason=%q", c.Flagged, c.FlagReason)
+	}
+
+	// Unflagging clears the reason so a later flag starts blank.
+	if err := e.repo.SetFlag(ctx, e.user, id, false, "ignored"); err != nil {
+		t.Fatalf("SetFlag off: %v", err)
+	}
+	c, _ = e.repo.Get(ctx, e.user, id)
+	if c.Flagged || c.FlagReason != "" {
+		t.Fatalf("after unflagging: flagged=%v reason=%q", c.Flagged, c.FlagReason)
+	}
+
+	if err := e.repo.SetFlag(ctx, e.other, id, true, "not mine"); !errors.Is(err, cards.ErrNotFound) {
+		t.Fatalf("flagging another user's card: err=%v, want ErrNotFound", err)
+	}
+}
+
+func TestBuriedCardsSitOutTheQueueUntilTheirTime(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	list, _ := e.repo.ListForNote(ctx, e.user, e.note)
+	id := list[0].ID
+	until := now.Add(24 * time.Hour)
+
+	if err := e.repo.SetBuriedUntil(ctx, e.user, id, until); err != nil {
+		t.Fatalf("SetBuriedUntil: %v", err)
+	}
+
+	if due, _ := e.repo.Due(ctx, e.user, e.deck, at(now), 10); len(due) != 0 {
+		t.Fatalf("buried card still in the queue")
+	}
+	if counts, _ := e.repo.Counts(ctx, e.user, e.deck, at(now)); counts.Total() != 0 {
+		t.Fatalf("buried card still counted: %+v", counts)
+	}
+	if _, err := e.repo.NextDeckToStudy(ctx, e.user, at(now)); !errors.Is(err, cards.ErrNotFound) {
+		t.Fatalf("deck with only a buried card still offered for study: %v", err)
+	}
+
+	// Once the burial lapses the card is simply back — nothing has to unbury it.
+	later := until.Add(time.Minute)
+	if due, _ := e.repo.Due(ctx, e.user, e.deck, at(later), 10); len(due) != 1 {
+		t.Fatalf("card did not return after its burial lapsed")
+	}
+
+	c, _ := e.repo.Get(ctx, e.user, id)
+	if !c.Buried(now) || c.Buried(later) {
+		t.Fatalf("Buried() wrong: at now=%v at later=%v", c.Buried(now), c.Buried(later))
+	}
+}
+
+func TestSetBuriedUntilZeroUnburies(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	list, _ := e.repo.ListForNote(ctx, e.user, e.note)
+	id := list[0].ID
+
+	if err := e.repo.SetBuriedUntil(ctx, e.user, id, now.Add(48*time.Hour)); err != nil {
+		t.Fatalf("SetBuriedUntil: %v", err)
+	}
+	if err := e.repo.SetBuriedUntil(ctx, e.user, id, time.Time{}); err != nil {
+		t.Fatalf("unbury: %v", err)
+	}
+	if due, _ := e.repo.Due(ctx, e.user, e.deck, at(now), 10); len(due) != 1 {
+		t.Fatalf("unburied card missing from the queue")
+	}
+
+	if err := e.repo.SetBuriedUntil(ctx, e.other, id, time.Time{}); !errors.Is(err, cards.ErrNotFound) {
+		t.Fatalf("burying another user's card: err=%v, want ErrNotFound", err)
+	}
+}
+
+func TestListNeedingAttentionCoversFlaggedAndSuspended(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+
+	list, _ := e.repo.ListForNote(ctx, e.user, e.note)
+	if err := e.repo.SetFlag(ctx, e.user, list[0].ID, true, "check this"); err != nil {
+		t.Fatalf("SetFlag: %v", err)
+	}
+
+	got, err := e.repo.ListNeedingAttention(ctx, e.user, e.deck)
+	if err != nil {
+		t.Fatalf("ListNeedingAttention: %v", err)
+	}
+	if len(got) != 1 || got[0].FlagReason != "check this" {
+		t.Fatalf("attention = %+v, want the one flagged card with its reason", got)
+	}
+
+	// A suspended-only card belongs in the set too, reason and all.
+	if err := e.repo.SetFlag(ctx, e.user, list[0].ID, false, ""); err != nil {
+		t.Fatalf("SetFlag off: %v", err)
+	}
+	if err := e.repo.SetSuspended(ctx, e.user, list[0].ID, true, "resting"); err != nil {
+		t.Fatalf("SetSuspended: %v", err)
+	}
+	got, _ = e.repo.ListNeedingAttention(ctx, e.user, e.deck)
+	if len(got) != 1 || got[0].SuspendReason != "resting" || got[0].Flagged {
+		t.Fatalf("attention = %+v, want the suspended card with its reason", got)
+	}
+
+	// Resuming clears the reason and empties the set.
+	if err := e.repo.SetSuspended(ctx, e.user, list[0].ID, false, "ignored"); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	c, _ := e.repo.Get(ctx, e.user, list[0].ID)
+	if c.Suspended || c.SuspendReason != "" {
+		t.Fatalf("after resume: suspended=%v reason=%q", c.Suspended, c.SuspendReason)
+	}
+	if got, _ := e.repo.ListNeedingAttention(ctx, e.user, e.deck); len(got) != 0 {
+		t.Fatalf("resumed unflagged card still needs attention: %+v", got)
+	}
+
+	if got, _ := e.repo.ListNeedingAttention(ctx, e.other, e.deck); len(got) != 0 {
+		t.Fatalf("another user saw this deck's attention cards")
+	}
+	if got, _ := e.repo.ListNeedingAttention(ctx, e.user, e.deck+999); len(got) != 0 {
+		t.Fatalf("another deck saw this deck's attention cards")
+	}
+}
+
+func TestListForNotesGroupsCardsByNote(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+
+	second, err := notes.NewRepository(e.db).Create(ctx, e.user, notes.CreateInput{
+		DeckID: e.deck,
+		Type:   notes.TypeBasic,
+		Fields: []notes.Field{{Name: "front", Value: "grazie"}, {Name: "back", Value: "thanks"}},
+	})
+	if err != nil {
+		t.Fatalf("create note: %v", err)
+	}
+
+	got, err := e.repo.ListForNotes(ctx, e.user, []int64{e.note, second.ID})
+	if err != nil {
+		t.Fatalf("ListForNotes: %v", err)
+	}
+	if len(got) != 2 || len(got[e.note]) != 1 || len(got[second.ID]) != 1 {
+		t.Fatalf("ListForNotes = %+v, want one card under each note", got)
+	}
+
+	if got, _ := e.repo.ListForNotes(ctx, e.other, []int64{e.note}); len(got) != 0 {
+		t.Fatalf("another user saw cards through ListForNotes")
+	}
+	if got, _ := e.repo.ListForNotes(ctx, e.user, nil); len(got) != 0 {
+		t.Fatalf("empty id list returned cards")
+	}
+}

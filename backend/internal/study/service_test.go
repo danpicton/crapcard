@@ -372,7 +372,7 @@ func TestAnswerRefusesASuspendedCard(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Next: %v", err)
 	}
-	if err := e.cards.SetSuspended(ctx, e.user, q.CardID, true); err != nil {
+	if err := e.cards.SetSuspended(ctx, e.user, q.CardID, true, ""); err != nil {
 		t.Fatalf("SetSuspended: %v", err)
 	}
 	if _, err := e.svc.Answer(ctx, e.user, q.CardID, srs.RatingGood, at(now)); !errors.Is(err, study.ErrCardSuspended) {

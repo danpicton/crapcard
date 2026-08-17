@@ -196,9 +196,21 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// One query for the whole page's cards, so the list can show per-card
+	// state (suspended, flagged, buried) without a fetch per note.
+	ids := make([]int64, 0, len(list))
+	for _, n := range list {
+		ids = append(ids, n.ID)
+	}
+	byNote, err := h.cards.ListForNotes(r.Context(), u.ID, ids)
+	if err != nil {
+		writeNoteError(w, err)
+		return
+	}
+
 	items := make([]map[string]any, 0, len(list))
 	for _, n := range list {
-		items = append(items, publicNote(n, nil))
+		items = append(items, publicNote(n, byNote[n.ID]))
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"items":  items,
@@ -389,6 +401,10 @@ func publicNote(n *Note, list []*cards.Card) map[string]any {
 	if list != nil {
 		cardsOut := make([]map[string]any, 0, len(list))
 		for _, c := range list {
+			var buriedUntil any
+			if !c.BuriedUntil.IsZero() {
+				buriedUntil = c.BuriedUntil
+			}
 			cardsOut = append(cardsOut, map[string]any{
 				"id":        c.ID,
 				"template":  c.Template,
@@ -397,6 +413,10 @@ func publicNote(n *Note, list []*cards.Card) map[string]any {
 				"reps":      c.State.Reps,
 				"lapses":    c.State.Lapses,
 				"suspended": c.Suspended,
+				"flagged":   c.Flagged,
+				// Null when not buried; the reason is deliberately absent —
+				// it is only read in the flagged-cards view.
+				"buried_until": buriedUntil,
 			})
 		}
 		out["cards"] = cardsOut
