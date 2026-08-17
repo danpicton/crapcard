@@ -195,6 +195,15 @@
 	     it aside without grading it. Deliberately quiet — grading is the job,
 	     these are the exceptions. -->
 	<div class="card-tools">
+		<!-- Editing happens on the note, in the deck page's composer; the
+		     return param brings the session back afterwards. -->
+		<a
+			class="link"
+			href="/decks/{session.card.deck_id}?edit={session.card
+				.note_id}&return={encodeURIComponent(deckId === null ? '/' : `/decks/${deckId}/study`)}"
+		>
+			Edit
+		</a>
 		{#if session.card.flagged}
 			<FlagIcon />
 			<button
@@ -497,6 +506,7 @@
 		font-size: 0.8125rem;
 		cursor: pointer;
 		color: var(--text-3);
+		text-decoration: none;
 	}
 
 	.link:hover:not(:disabled) {

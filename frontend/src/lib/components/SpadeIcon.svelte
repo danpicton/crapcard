@@ -24,10 +24,10 @@
 		stroke-linejoin="round"
 		aria-hidden="true"
 	>
-		<!-- Handle, shaft, and blade of a digging spade. -->
-		<path d="M9 2h6" />
-		<path d="M12 2v9" />
-		<path d="M7 13c0-1.5 2-2 5-2s5 0.5 5 2v4a5 5 0 0 1-10 0z" />
+		<!-- Blade, shaft, D-handle: Lucide's shovel (ISC licence). -->
+		<path d="M2 22v-5l5-5 5 5-5 5z" />
+		<path d="M9.5 14.5 16 8" />
+		<path d="m17 2 5 5-.5.5a3.53 3.53 0 0 1-5 0s0 0 0 0a3.53 3.53 0 0 1 0-5L17 2" />
 	</svg>
 </span>
 

@@ -2,6 +2,7 @@
 	import { onMount, tick } from 'svelte';
 	import { slide } from 'svelte/transition';
 	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
 	import {
 		api,
 		ApiError,
@@ -26,6 +27,13 @@
 	import MaskEditorModal from '$lib/components/MaskEditorModal.svelte';
 
 	const deckId = Number(page.params.id);
+
+	// Where "Done" goes when the composer was opened from elsewhere (the study
+	// screen's Edit). Same-origin paths only.
+	const returnTo = (() => {
+		const raw = page.url.searchParams.get('return');
+		return raw !== null && raw.startsWith('/') && !raw.startsWith('//') ? raw : null;
+	})();
 
 	let deck = $state<Deck | null>(null);
 	let notes = $state<Note[]>([]);
@@ -244,7 +252,19 @@
 		}
 	}
 
-	onMount(load);
+	onMount(async () => {
+		await load();
+		// ?edit= deep-links straight into the composer — the study screen's
+		// Edit lands here. Fetched by id: the note may be on any list page.
+		const editParam = page.url.searchParams.get('edit');
+		if (editParam !== null) {
+			try {
+				startEdit(await api.getNote(Number(editParam)));
+			} catch (err) {
+				error = err instanceof Error ? err.message : 'could not open the card';
+			}
+		}
+	});
 
 	function goToPage(next: number) {
 		const bounded = Math.min(Math.max(next, 1), pageCount);
@@ -332,6 +352,11 @@
 		composing = false;
 		editingId = null;
 		pendingCreateRef = null;
+		if (returnTo !== null) {
+			// Opened from the study screen: hand the session back.
+			await goto(returnTo);
+			return;
+		}
 		if (created) {
 			// The list is newest first, so a new card lands on page one.
 			offset = 0;

@@ -22,7 +22,9 @@
 	let modalEl = $state<HTMLElement | null>(null);
 	let reasonEl = $state<HTMLTextAreaElement | null>(null);
 
-	const withFlag = $derived(mode === 'flag' || alsoOther);
+	// A reason has to live on a flag, so writing one implies flagging.
+	const flagImplied = $derived(mode === 'suspend' && reason.trim() !== '');
+	const withFlag = $derived(mode === 'flag' || alsoOther || flagImplied);
 
 	$effect(() => {
 		(reasonEl ?? modalEl)?.focus();
@@ -62,32 +64,27 @@
 		</header>
 
 		<form onsubmit={confirm}>
-			{#if mode === 'suspend'}
-				<label class="checkbox">
-					<input type="checkbox" bind:checked={alsoOther} />
-					Also flag
-				</label>
-			{/if}
+			<label class="field">
+				<span>Reason</span>
+				<textarea
+					bind:this={reasonEl}
+					bind:value={reason}
+					rows="3"
+					maxlength="2000"
+					placeholder="optional"
+				></textarea>
+			</label>
 
-			{#if withFlag}
-				<label class="field">
-					<span>Reason</span>
-					<textarea
-						bind:this={reasonEl}
-						bind:value={reason}
-						rows="3"
-						maxlength="2000"
-						placeholder="optional"
-					></textarea>
-				</label>
-			{/if}
-
-			{#if mode === 'flag'}
-				<label class="checkbox">
+			<label class="checkbox">
+				{#if mode === 'flag'}
 					<input type="checkbox" bind:checked={alsoOther} />
 					Also suspend
-				</label>
-			{/if}
+				{:else}
+					<input type="checkbox" checked={alsoOther || flagImplied} disabled={flagImplied}
+						onchange={(e) => (alsoOther = (e.target as HTMLInputElement).checked)} />
+					Also flag
+				{/if}
+			</label>
 
 			<div class="actions">
 				<button type="submit" class="primary">
