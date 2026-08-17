@@ -5,6 +5,8 @@
 	import { summariseMarkdown } from '$lib/noteSummary';
 	import { templateLabel } from '$lib/cloze';
 	import FlagIcon from '$lib/components/FlagIcon.svelte';
+	import PauseIcon from '$lib/components/PauseIcon.svelte';
+	import SpadeIcon from '$lib/components/SpadeIcon.svelte';
 	import CardPreviewModal from '$lib/components/CardPreviewModal.svelte';
 
 	/**
@@ -92,8 +94,8 @@
 					<div class="card-side">
 						<span class="meta muted small">
 							{templateLabel(c.template)}
-							{#if c.suspended}<span class="state-chip">suspended</span>{/if}
-							{#if buriedNow(c)}<span class="state-chip">buried</span>{/if}
+							{#if c.suspended}<PauseIcon />{/if}
+							{#if buriedNow(c)}<SpadeIcon />{/if}
 						</span>
 						<span class="actions">
 							<button type="button" class="link" onclick={() => (previewNoteId = c.note_id)}>
@@ -227,15 +229,6 @@
 		display: inline-flex;
 		align-items: center;
 		gap: 0.375rem;
-	}
-
-	.state-chip {
-		font-size: 0.6875rem;
-		padding: 0.0625rem 0.4375rem;
-		border-radius: 999px;
-		background: var(--bg-hover);
-		color: var(--text-2);
-		white-space: nowrap;
 	}
 
 	.actions {

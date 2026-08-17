@@ -63,26 +63,21 @@
 
 		<form onsubmit={confirm}>
 			{#if mode === 'suspend'}
-				<p class="muted small">
-					The card stays in the deck but leaves the study queue until you resume it.
-				</p>
 				<label class="checkbox">
 					<input type="checkbox" bind:checked={alsoOther} />
-					Also flag, with a reason to read later
+					Also flag
 				</label>
 			{/if}
 
 			{#if withFlag}
 				<label class="field">
-					<span>Reason <span class="muted">(optional — shown in the flagged cards view)</span></span>
+					<span>Reason</span>
 					<textarea
 						bind:this={reasonEl}
 						bind:value={reason}
 						rows="3"
 						maxlength="2000"
-						placeholder={mode === 'flag'
-							? 'Why does this card need attention?'
-							: 'Why is this card being suspended?'}
+						placeholder="optional"
 					></textarea>
 				</label>
 			{/if}
@@ -90,7 +85,7 @@
 			{#if mode === 'flag'}
 				<label class="checkbox">
 					<input type="checkbox" bind:checked={alsoOther} />
-					Also suspend — keep it out of study until resumed
+					Also suspend
 				</label>
 			{/if}
 
@@ -204,14 +199,5 @@
 
 	.link:hover {
 		color: var(--accent-tx);
-	}
-
-	.muted {
-		color: var(--text-3);
-	}
-
-	.small {
-		font-size: 0.8125rem;
-		margin: 0;
 	}
 </style>

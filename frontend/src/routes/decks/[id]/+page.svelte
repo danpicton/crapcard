@@ -19,6 +19,8 @@
 	import BidirectionalIcon from '$lib/components/BidirectionalIcon.svelte';
 	import ClozeIcon from '$lib/components/ClozeIcon.svelte';
 	import FlagIcon from '$lib/components/FlagIcon.svelte';
+	import PauseIcon from '$lib/components/PauseIcon.svelte';
+	import SpadeIcon from '$lib/components/SpadeIcon.svelte';
 	import FlagCardModal from '$lib/components/FlagCardModal.svelte';
 	import CardPreviewModal from '$lib/components/CardPreviewModal.svelte';
 	import MaskEditorModal from '$lib/components/MaskEditorModal.svelte';
@@ -612,8 +614,8 @@
 					</p>
 					<div class="note-actions">
 						{#if anyFlagged(note)}<FlagIcon />{/if}
-						{#if anySuspended(note)}<span class="state-chip" title="Has a suspended card">suspended</span>{/if}
-						{#if (note.cards ?? []).some(buriedNow)}<span class="state-chip" title="Has a buried card">buried</span>{/if}
+						{#if anySuspended(note)}<PauseIcon />{/if}
+						{#if (note.cards ?? []).some(buriedNow)}<SpadeIcon />{/if}
 						{#if isClozeNote(note)}<ClozeIcon />{/if}
 						{#if note.reversed && !isClozeNote(note)}<BidirectionalIcon />{/if}
 						<button
@@ -638,11 +640,9 @@
 									<span class="card-name">
 										{templateLabel(c.template)}
 										{#if c.flagged}<FlagIcon />{/if}
-										{#if c.suspended}<span class="state-chip">suspended</span>{/if}
+										{#if c.suspended}<PauseIcon />{/if}
 										{#if buriedNow(c)}
-											<span class="state-chip" title={c.buried_until}>
-												buried · {buriedLabel(c.buried_until ?? '')}
-											</span>
+											<SpadeIcon title="Buried · {buriedLabel(c.buried_until ?? '')}" />
 										{/if}
 									</span>
 									<span class="card-row-actions">
@@ -1025,15 +1025,6 @@
 
 	.flagged-link:hover {
 		color: var(--accent-tx);
-	}
-
-	.state-chip {
-		font-size: 0.6875rem;
-		padding: 0.0625rem 0.4375rem;
-		border-radius: 999px;
-		background: var(--bg-hover);
-		color: var(--text-2);
-		white-space: nowrap;
 	}
 
 	/* The per-note card manager unfolds full-width under the note row. */
