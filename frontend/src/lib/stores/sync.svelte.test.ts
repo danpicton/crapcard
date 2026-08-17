@@ -124,10 +124,12 @@ describe('card action outbox entries', () => {
 			calls.push(`flag:${id}:${flagged}:${reason}`);
 			return {};
 		});
-		deps.suspendCard.mockImplementation(async (id: number, suspended: boolean) => {
-			calls.push(`suspend:${id}:${suspended}`);
-			return {};
-		});
+		deps.suspendCard.mockImplementation(
+			async (id: number, suspended: boolean, reason: string) => {
+				calls.push(`suspend:${id}:${suspended}:${reason}`);
+				return {};
+			},
+		);
 		deps.buryCard.mockImplementation(async (id: number, days: number) => {
 			calls.push(`bury:${id}:${days}`);
 			return {};
@@ -136,11 +138,16 @@ describe('card action outbox entries', () => {
 		const s = createSyncStore(deps);
 		s.queueAnswer(1, 3);
 		s.queueFlag(2, true, 'odd wording');
-		s.queueSuspend(2, true);
+		s.queueSuspend(2, true, 'set aside');
 		s.queueBury(3, 5);
 		await s.flush();
 
-		expect(calls).toEqual(['answer:1', 'flag:2:true:odd wording', 'suspend:2:true', 'bury:3:5']);
+		expect(calls).toEqual([
+			'answer:1',
+			'flag:2:true:odd wording',
+			'suspend:2:true:set aside',
+			'bury:3:5',
+		]);
 		expect(s.pending).toBe(0);
 	});
 
@@ -149,7 +156,7 @@ describe('card action outbox entries', () => {
 		deps.suspendCard.mockRejectedValue(networkDown);
 
 		const s = createSyncStore(deps);
-		s.queueSuspend(9, true);
+		s.queueSuspend(9, true, '');
 		await s.flush();
 		expect(s.pending).toBe(1);
 

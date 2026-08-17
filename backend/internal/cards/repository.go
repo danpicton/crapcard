@@ -38,7 +38,10 @@ type Card struct {
 	DeckID    int64
 	Template  string
 	Suspended bool
-	Flagged   bool
+	// SuspendReason is free text left when suspending; empty when the card is
+	// not suspended (resuming clears it).
+	SuspendReason string
+	Flagged       bool
 	// FlagReason is free text the user left for their future self; empty when
 	// the card is not flagged.
 	FlagReason string
@@ -99,7 +102,7 @@ func (r *Repository) conn(tx execer) execer {
 	return tx
 }
 
-const cardColumns = `id, note_id, user_id, deck_id, template, suspended, flagged, flag_reason, buried_until,
+const cardColumns = `id, note_id, user_id, deck_id, template, suspended, suspend_reason, flagged, flag_reason, buried_until,
 	due, stability, difficulty, elapsed_days, scheduled_days, reps, lapses, state, last_review,
 	created_at`
 
@@ -108,7 +111,7 @@ func scanCard(row interface{ Scan(...any) error }) (*Card, error) {
 	var suspended, flagged int
 	var buriedUntil, lastReview sql.NullTime
 	if err := row.Scan(
-		&c.ID, &c.NoteID, &c.UserID, &c.DeckID, &c.Template, &suspended,
+		&c.ID, &c.NoteID, &c.UserID, &c.DeckID, &c.Template, &suspended, &c.SuspendReason,
 		&flagged, &c.FlagReason, &buriedUntil,
 		&c.State.Due, &c.State.Stability, &c.State.Difficulty,
 		&c.State.ElapsedDays, &c.State.ScheduledDays, &c.State.Reps, &c.State.Lapses,
@@ -589,14 +592,18 @@ func (r *Repository) ReviewLog(ctx context.Context, userID, cardID int64) ([]srs
 }
 
 // SetSuspended suspends or resumes a card, taking it out of or back into the
-// study queue without losing its history.
-func (r *Repository) SetSuspended(ctx context.Context, userID, cardID int64, suspended bool) error {
+// study queue without losing its history. The reason is only kept while
+// suspended: resuming clears it.
+func (r *Repository) SetSuspended(ctx context.Context, userID, cardID int64, suspended bool, reason string) error {
 	v := 0
-	if suspended {
+	if !suspended {
+		reason = ""
+	} else {
 		v = 1
 	}
 	res, err := r.db.ExecContext(ctx,
-		`UPDATE cards SET suspended=? WHERE id=? AND user_id=?`, v, cardID, userID)
+		`UPDATE cards SET suspended=?, suspend_reason=? WHERE id=? AND user_id=?`,
+		v, reason, cardID, userID)
 	if err != nil {
 		return fmt.Errorf("set suspended: %w", err)
 	}
@@ -643,14 +650,17 @@ func (r *Repository) SetBuriedUntil(ctx context.Context, userID, cardID int64, u
 	return nil
 }
 
-// ListFlagged returns the deck's flagged cards. When a card was flagged is
-// not tracked, so ordering falls back to id — stable, roughly creation order.
-func (r *Repository) ListFlagged(ctx context.Context, userID, deckID int64) ([]*Card, error) {
+// ListNeedingAttention returns the deck's flagged and suspended cards — the
+// set the user has put aside for their future self. When a card entered that
+// set is not tracked, so ordering falls back to id — stable, roughly
+// creation order.
+func (r *Repository) ListNeedingAttention(ctx context.Context, userID, deckID int64) ([]*Card, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT `+cardColumns+` FROM cards WHERE user_id=? AND deck_id=? AND flagged=1 ORDER BY id`,
+		`SELECT `+cardColumns+` FROM cards
+		 WHERE user_id=? AND deck_id=? AND (flagged=1 OR suspended=1) ORDER BY id`,
 		userID, deckID)
 	if err != nil {
-		return nil, fmt.Errorf("list flagged cards: %w", err)
+		return nil, fmt.Errorf("list attention cards: %w", err)
 	}
 	defer rows.Close()
 

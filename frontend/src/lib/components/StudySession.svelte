@@ -46,12 +46,15 @@
 	// Which card-action dialog is open, if any. Null while studying.
 	let cardModal = $state<'flag' | 'suspend' | null>(null);
 
+	// The reason goes to the action the dialog was opened for; the "also"
+	// action rides along without one.
 	function onCardAction(choice: { flag: boolean; reason: string; suspend: boolean }) {
+		const mode = cardModal;
 		cardModal = null;
-		if (choice.flag) {
+		if (mode === 'flag') {
 			void session.setFlag(true, choice.reason, choice.suspend);
-		} else if (choice.suspend) {
-			void session.suspend(null);
+		} else if (mode === 'suspend') {
+			void session.suspend(choice.reason, choice.flag);
 		}
 	}
 

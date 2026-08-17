@@ -19,7 +19,7 @@ export type OutboxEntry =
 	| { id: string; kind: 'answer'; cardId: number; rating: number }
 	| { id: string; kind: 'note-update'; noteId: number; input: NoteInput }
 	| { id: string; kind: 'note-create'; ref: string; input: NoteInput }
-	| { id: string; kind: 'card-suspend'; cardId: number; suspended: boolean }
+	| { id: string; kind: 'card-suspend'; cardId: number; suspended: boolean; reason: string }
 	| { id: string; kind: 'card-flag'; cardId: number; flagged: boolean; reason: string }
 	| { id: string; kind: 'card-bury'; cardId: number; days: number };
 
@@ -27,7 +27,7 @@ interface SyncDeps {
 	answerCard: (cardId: number, rating: number) => Promise<AnswerResult>;
 	updateNote: (id: number, input: NoteInput) => Promise<Note>;
 	createNote: (input: NoteInput) => Promise<Note>;
-	suspendCard: (cardId: number, suspended: boolean) => Promise<unknown>;
+	suspendCard: (cardId: number, suspended: boolean, reason: string) => Promise<unknown>;
 	flagCard: (cardId: number, flagged: boolean, reason: string) => Promise<unknown>;
 	buryCard: (cardId: number, days: number) => Promise<unknown>;
 	/** A cheap reachability check — anything that resolves means online. */
@@ -38,7 +38,7 @@ const defaultDeps: SyncDeps = {
 	answerCard: (cardId, rating) => api.answerCard(cardId, rating),
 	updateNote: (id, input) => api.updateNote(id, input),
 	createNote: (input) => api.createNote(input),
-	suspendCard: (cardId, suspended) => api.suspendCard(cardId, suspended),
+	suspendCard: (cardId, suspended, reason) => api.suspendCard(cardId, suspended, reason),
 	flagCard: (cardId, flagged, reason) => api.flagCard(cardId, flagged, reason),
 	buryCard: (cardId, days) => api.buryCard(cardId, days),
 	ping: async () => {
@@ -133,7 +133,7 @@ export function createSyncStore(deps: SyncDeps = defaultDeps) {
 				return;
 			}
 			case 'card-suspend':
-				await deps.suspendCard(entry.cardId, entry.suspended);
+				await deps.suspendCard(entry.cardId, entry.suspended, entry.reason);
 				return;
 			case 'card-flag':
 				await deps.flagCard(entry.cardId, entry.flagged, entry.reason);
@@ -234,8 +234,8 @@ export function createSyncStore(deps: SyncDeps = defaultDeps) {
 		},
 
 		/** Queue a suspend/resume that could not reach the server. */
-		queueSuspend(cardId: number, suspended: boolean) {
-			outbox = [...outbox, { id: newId(), kind: 'card-suspend', cardId, suspended }];
+		queueSuspend(cardId: number, suspended: boolean, reason: string) {
+			outbox = [...outbox, { id: newId(), kind: 'card-suspend', cardId, suspended, reason }];
 			persist();
 		},
 

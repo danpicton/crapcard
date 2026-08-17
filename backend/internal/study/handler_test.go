@@ -264,7 +264,7 @@ func TestFlagEndpointStoresTheReason(t *testing.T) {
 		t.Fatalf("study card does not carry the flag: %s", rec.Body.String())
 	}
 
-	tooLong := strings.Repeat("x", study.MaxFlagReasonLen+1)
+	tooLong := strings.Repeat("x", study.MaxReasonLen+1)
 	rec = e.serve(t, e.user, http.MethodPost, "/api/cards/"+itoa(q.CardID)+"/flag",
 		`{"flagged":true,"reason":"`+tooLong+`"}`)
 	if rec.Code != http.StatusBadRequest {
@@ -314,44 +314,63 @@ func TestBuryEndpointHidesTheCardForItsDays(t *testing.T) {
 	}
 }
 
-func TestFlaggedEndpointListsReasonsPerDeck(t *testing.T) {
+func TestAttentionEndpointListsFlaggedAndSuspendedWithReasons(t *testing.T) {
 	e := newEnv(t)
-	e.addNote(t, "ciao", "hello", false)
+	e.addNote(t, "ciao", "hello", true)
 	q, _ := e.svc.Next(context.Background(), e.user, e.deck, at(timeNow()))
 
+	// One card flagged, the note's other card suspended with its own reason.
 	e.serve(t, e.user, http.MethodPost, "/api/cards/"+itoa(q.CardID)+"/flag",
 		`{"flagged":true,"reason":"needs a better example"}`)
-	e.serve(t, e.user, http.MethodPost, "/api/cards/"+itoa(q.CardID)+"/suspend", `{"suspended":true}`)
+	cardsForNote, _ := e.cards.ListForNote(context.Background(), e.user, q.NoteID)
+	var otherID int64
+	for _, c := range cardsForNote {
+		if c.ID != q.CardID {
+			otherID = c.ID
+		}
+	}
+	e.serve(t, e.user, http.MethodPost, "/api/cards/"+itoa(otherID)+"/suspend",
+		`{"suspended":true,"reason":"too easy backwards"}`)
 
-	rec := e.serve(t, e.user, http.MethodGet, "/api/decks/"+itoa(e.deck)+"/flagged", "")
+	rec := e.serve(t, e.user, http.MethodGet, "/api/decks/"+itoa(e.deck)+"/attention", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
 	}
 	var got struct {
 		Cards []struct {
-			CardID    int64  `json:"card_id"`
-			Question  string `json:"question"`
-			Reason    string `json:"reason"`
-			Suspended bool   `json:"suspended"`
+			CardID        int64  `json:"card_id"`
+			Question      string `json:"question"`
+			Flagged       bool   `json:"flagged"`
+			FlagReason    string `json:"flag_reason"`
+			Suspended     bool   `json:"suspended"`
+			SuspendReason string `json:"suspend_reason"`
 		} `json:"cards"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(got.Cards) != 1 {
-		t.Fatalf("cards = %s, want 1", rec.Body.String())
+	if len(got.Cards) != 2 {
+		t.Fatalf("cards = %s, want the flagged and the suspended card", rec.Body.String())
 	}
-	c := got.Cards[0]
-	if c.CardID != q.CardID || c.Question != "ciao" || c.Reason != "needs a better example" || !c.Suspended {
-		t.Fatalf("flagged card = %+v", c)
+	byID := map[int64]int{}
+	for i, c := range got.Cards {
+		byID[c.CardID] = i
+	}
+	f := got.Cards[byID[q.CardID]]
+	if !f.Flagged || f.FlagReason != "needs a better example" || f.Suspended {
+		t.Fatalf("flagged card = %+v", f)
+	}
+	s := got.Cards[byID[otherID]]
+	if s.Flagged || !s.Suspended || s.SuspendReason != "too easy backwards" {
+		t.Fatalf("suspended card = %+v", s)
 	}
 
 	// Unknown deck 404s; another user's deck too.
-	rec = e.serve(t, e.user, http.MethodGet, "/api/decks/99999/flagged", "")
+	rec = e.serve(t, e.user, http.MethodGet, "/api/decks/99999/attention", "")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("unknown deck: %d, want 404", rec.Code)
 	}
-	rec = e.serve(t, e.other, http.MethodGet, "/api/decks/"+itoa(e.deck)+"/flagged", "")
+	rec = e.serve(t, e.other, http.MethodGet, "/api/decks/"+itoa(e.deck)+"/attention", "")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("another user's deck: %d, want 404", rec.Code)
 	}

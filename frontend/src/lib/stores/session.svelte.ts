@@ -57,13 +57,13 @@ interface SessionDeps {
 	fetchQueue: (deckId: number | null) => Promise<StudyQueue | null>;
 	answerCard: (cardId: number, rating: number) => Promise<AnswerResult>;
 	undoAnswer: () => Promise<StudyCard | null>;
-	suspendCard: (cardId: number, suspended: boolean) => Promise<unknown>;
+	suspendCard: (cardId: number, suspended: boolean, reason: string) => Promise<unknown>;
 	flagCard: (cardId: number, flagged: boolean, reason: string) => Promise<unknown>;
 	buryCard: (cardId: number, days: number) => Promise<unknown>;
 	/** Park an answer that could not reach the server; returns its id. */
 	queueAnswer: (cardId: number, rating: number) => string;
 	/** Park a card action that could not reach the server. */
-	queueSuspend: (cardId: number, suspended: boolean) => void;
+	queueSuspend: (cardId: number, suspended: boolean, reason: string) => void;
 	queueFlag: (cardId: number, flagged: boolean, reason: string) => void;
 	queueBury: (cardId: number, days: number) => void;
 	/** Take a parked answer back; false if it already synced. */
@@ -76,16 +76,16 @@ const defaultDeps: SessionDeps = {
 	fetchQueue: (deckId) => api.studyQueue(deckId),
 	answerCard: (cardId, rating) => api.answerCard(cardId, rating),
 	undoAnswer: () => api.undoAnswer(),
-	suspendCard: (cardId, suspended) => api.suspendCard(cardId, suspended),
+	suspendCard: (cardId, suspended, reason) => api.suspendCard(cardId, suspended, reason),
 	flagCard: (cardId, flagged, reason) => api.flagCard(cardId, flagged, reason),
 	buryCard: (cardId, days) => api.buryCard(cardId, days),
 	queueAnswer: (cardId, rating) => {
 		sync.markOffline();
 		return sync.queueAnswer(cardId, rating);
 	},
-	queueSuspend: (cardId, suspended) => {
+	queueSuspend: (cardId, suspended, reason) => {
 		sync.markOffline();
-		sync.queueSuspend(cardId, suspended);
+		sync.queueSuspend(cardId, suspended, reason);
 	},
 	queueFlag: (cardId, flagged, reason) => {
 		sync.markOffline();
@@ -319,14 +319,14 @@ export function createSession(deckId: number | null, deps: SessionDeps = default
 			try {
 				try {
 					await deps.flagCard(card.card_id, flagged, reason);
-					if (alsoSuspend) await deps.suspendCard(card.card_id, true);
+					if (alsoSuspend) await deps.suspendCard(card.card_id, true, '');
 				} catch (err) {
 					if (!isNetworkFailure(err)) {
 						error = err instanceof Error ? err.message : 'could not flag the card';
 						return;
 					}
 					deps.queueFlag(card.card_id, flagged, reason);
-					if (alsoSuspend) deps.queueSuspend(card.card_id, true);
+					if (alsoSuspend) deps.queueSuspend(card.card_id, true, '');
 				}
 				error = null;
 				if (alsoSuspend) {
@@ -344,26 +344,26 @@ export function createSession(deckId: number | null, deps: SessionDeps = default
 		},
 
 		/**
-		 * Suspend the current card and move on without grading it. A non-null
-		 * flagReason also flags the card, so the reason is there to read in
-		 * the flagged-cards view when deciding whether to resume it.
+		 * Suspend the current card and move on without grading it. The reason
+		 * belongs to the suspension itself, read back in the attention view;
+		 * alsoFlag additionally flags the card, at the user's discretion.
 		 */
-		async suspend(flagReason: string | null = null) {
+		async suspend(reason = '', alsoFlag = false) {
 			const card = queue[0];
 			if (!card || submitting) return;
 
 			submitting = true;
 			try {
 				try {
-					if (flagReason !== null) await deps.flagCard(card.card_id, true, flagReason);
-					await deps.suspendCard(card.card_id, true);
+					await deps.suspendCard(card.card_id, true, reason);
+					if (alsoFlag) await deps.flagCard(card.card_id, true, '');
 				} catch (err) {
 					if (!isNetworkFailure(err)) {
 						error = err instanceof Error ? err.message : 'could not suspend the card';
 						return;
 					}
-					if (flagReason !== null) deps.queueFlag(card.card_id, true, flagReason);
-					deps.queueSuspend(card.card_id, true);
+					deps.queueSuspend(card.card_id, true, reason);
+					if (alsoFlag) deps.queueFlag(card.card_id, true, '');
 				}
 				error = null;
 				queue = queue.filter((c) => c.card_id !== card.card_id);

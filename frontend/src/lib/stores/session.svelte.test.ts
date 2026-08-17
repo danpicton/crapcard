@@ -442,30 +442,30 @@ describe('card actions during study', () => {
 
 		await s.setFlag(true, 'needs a rewrite', true);
 		expect(deps.flagCard).toHaveBeenCalledWith(1, true, 'needs a rewrite');
-		expect(deps.suspendCard).toHaveBeenCalledWith(1, true);
+		expect(deps.suspendCard).toHaveBeenCalledWith(1, true, '');
 		expect(deps.answerCard).not.toHaveBeenCalled();
 		expect(s.card?.card_id).toBe(2);
 		expect(s.revealed).toBe(false);
 	});
 
-	it('suspend with a reason flags too, so the reason survives to the flagged view', async () => {
+	it('a suspend reason stays on the suspension and never flags by itself', async () => {
 		deps.fetchQueue.mockResolvedValue(studyQueue([card(), card({ card_id: 2 })]));
 		const s = createSession(1, deps);
 		await s.start();
 
 		await s.suspend('too niche for now');
-		expect(deps.flagCard).toHaveBeenCalledWith(1, true, 'too niche for now');
-		expect(deps.suspendCard).toHaveBeenCalledWith(1, true);
+		expect(deps.suspendCard).toHaveBeenCalledWith(1, true, 'too niche for now');
+		expect(deps.flagCard).not.toHaveBeenCalled();
 		expect(s.card?.card_id).toBe(2);
 	});
 
-	it('suspend without a reason never flags', async () => {
+	it('suspend flags too only when asked', async () => {
 		const s = createSession(1, deps);
 		await s.start();
 
-		await s.suspend();
-		expect(deps.flagCard).not.toHaveBeenCalled();
-		expect(deps.suspendCard).toHaveBeenCalledWith(1, true);
+		await s.suspend('resting', true);
+		expect(deps.suspendCard).toHaveBeenCalledWith(1, true, 'resting');
+		expect(deps.flagCard).toHaveBeenCalledWith(1, true, '');
 	});
 
 	it('bury removes the card, including its requeued learning copy', async () => {
@@ -502,7 +502,7 @@ describe('card actions during study', () => {
 
 		await s.setFlag(true, 'check later', true);
 		expect(deps.queueFlag).toHaveBeenCalledWith(1, true, 'check later');
-		expect(deps.queueSuspend).toHaveBeenCalledWith(1, true);
+		expect(deps.queueSuspend).toHaveBeenCalledWith(1, true, '');
 		// The session moves on exactly as it would online.
 		expect(s.card?.card_id).toBe(2);
 

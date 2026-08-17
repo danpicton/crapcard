@@ -22,10 +22,6 @@
 	let modalEl = $state<HTMLElement | null>(null);
 	let reasonEl = $state<HTMLTextAreaElement | null>(null);
 
-	// A reason has to live on a flag, so writing one implies flagging.
-	const flagImplied = $derived(mode === 'suspend' && reason.trim() !== '');
-	const withFlag = $derived(mode === 'flag' || alsoOther || flagImplied);
-
 	$effect(() => {
 		(reasonEl ?? modalEl)?.focus();
 	});
@@ -34,11 +30,13 @@
 		if (event.key === 'Escape') onclose();
 	}
 
+	// The reason belongs to the action the dialog is for; the "also" action
+	// rides along without one.
 	function confirm(event: SubmitEvent) {
 		event.preventDefault();
 		onconfirm({
-			flag: withFlag,
-			reason: withFlag ? reason.trim() : '',
+			flag: mode === 'flag' || alsoOther,
+			reason: reason.trim(),
 			suspend: mode === 'suspend' || alsoOther,
 		});
 	}
@@ -76,19 +74,17 @@
 			</label>
 
 			<label class="checkbox">
-				{#if mode === 'flag'}
-					<input type="checkbox" bind:checked={alsoOther} />
-					Also suspend
-				{:else}
-					<input type="checkbox" checked={alsoOther || flagImplied} disabled={flagImplied}
-						onchange={(e) => (alsoOther = (e.target as HTMLInputElement).checked)} />
-					Also flag
-				{/if}
+				<input type="checkbox" bind:checked={alsoOther} />
+				{mode === 'flag' ? 'Also suspend' : 'Also flag'}
 			</label>
 
 			<div class="actions">
 				<button type="submit" class="primary">
-					{mode === 'flag' ? (alsoOther ? 'Flag & suspend' : 'Flag') : 'Suspend'}
+					{#if mode === 'flag'}
+						{alsoOther ? 'Flag & suspend' : 'Flag'}
+					{:else}
+						{alsoOther ? 'Suspend & flag' : 'Suspend'}
+					{/if}
 				</button>
 				<button type="button" class="link" onclick={onclose}>Cancel</button>
 			</div>

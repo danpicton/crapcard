@@ -46,8 +46,8 @@
 	// Which note the preview modal is showing, if any.
 	let previewNoteId = $state<number | null>(null);
 
-	// How many cards in the deck are flagged, for the head's link.
-	let flaggedCount = $state(0);
+	// How many cards in the deck are flagged or suspended, for the head's link.
+	let attentionCount = $state(0);
 	// Which note's per-card manager is unfolded, if any.
 	let manageNoteId = $state<number | null>(null);
 	// The flag/suspend dialog, when open, and the card it is about.
@@ -227,17 +227,17 @@
 		loading = true;
 		error = null;
 		try {
-			const [loadedDeck, page, loadedCounts, flagged] = await Promise.all([
+			const [loadedDeck, page, loadedCounts, attention] = await Promise.all([
 				api.getDeck(deckId),
 				api.listNotes({ deckId, limit: pageSize, offset }),
 				api.deckCounts(deckId).catch(() => null),
-				api.flaggedCards(deckId).catch(() => null),
+				api.attentionCards(deckId).catch(() => null),
 			]);
 			deck = loadedDeck;
 			notes = page.items;
 			total = page.total;
 			counts = loadedCounts;
-			flaggedCount = flagged?.cards.length ?? 0;
+			attentionCount = attention?.cards.length ?? 0;
 
 			// A deletion can empty the last page; step back rather than
 			// showing an empty list under a pager that says there is more.
@@ -442,13 +442,19 @@
 		}
 	}
 
+	// The reason goes to the action the dialog was opened for; the "also"
+	// action rides along without one.
 	function onCardModalConfirm(choice: { flag: boolean; reason: string; suspend: boolean }) {
 		const target = cardModal;
 		cardModal = null;
 		if (!target) return;
 		void cardAction(async () => {
-			if (choice.flag) await api.flagCard(target.cardId, true, choice.reason);
-			if (choice.suspend) await api.suspendCard(target.cardId, true);
+			if (choice.flag) {
+				await api.flagCard(target.cardId, true, target.mode === 'flag' ? choice.reason : '');
+			}
+			if (choice.suspend) {
+				await api.suspendCard(target.cardId, true, target.mode === 'suspend' ? choice.reason : '');
+			}
 		}, 'could not update the card');
 	}
 
@@ -501,10 +507,10 @@
 				{#if deck.description}<p class="muted small">{deck.description}</p>{/if}
 			</div>
 			<div class="head-actions">
-				{#if flaggedCount > 0}
-					<a class="flagged-link" href="/decks/{deckId}/flagged">
+				{#if attentionCount > 0}
+					<a class="flagged-link" href="/decks/{deckId}/attention">
 						<FlagIcon title="" />
-						Flagged · {flaggedCount}
+						Attention · {attentionCount}
 					</a>
 				{/if}
 				{#if counts && counts.total > 0}

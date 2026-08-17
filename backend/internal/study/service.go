@@ -276,9 +276,10 @@ func (s *Service) DeckCounts(ctx context.Context, userID, deckID int64, h cards.
 	return s.cards.Counts(ctx, userID, deckID, h)
 }
 
-// SetSuspended suspends or resumes a card.
-func (s *Service) SetSuspended(ctx context.Context, userID, cardID int64, suspended bool) error {
-	return s.cards.SetSuspended(ctx, userID, cardID, suspended)
+// SetSuspended suspends or resumes a card, keeping the reason only while
+// suspended.
+func (s *Service) SetSuspended(ctx context.Context, userID, cardID int64, suspended bool, reason string) error {
+	return s.cards.SetSuspended(ctx, userID, cardID, suspended, reason)
 }
 
 // Flag flags or unflags a card, keeping the reason only while flagged.
@@ -312,34 +313,37 @@ func (s *Service) Bury(ctx context.Context, userID, cardID int64, days int, h ca
 	return until, nil
 }
 
-// FlaggedCard is one entry in the flagged-cards view: the rendered question
-// so the list is recognisable, plus the reason and the card's other states so
-// the view can offer to lift them.
-type FlaggedCard struct {
-	CardID      int64
-	NoteID      int64
-	Template    string
-	Question    string
-	Reason      string
-	Suspended   bool
-	BuriedUntil time.Time
-	State       srs.State
-	Due         time.Time
+// AttentionCard is one entry in the attention view — a flagged or suspended
+// card: the rendered question so the list is recognisable, plus the reasons
+// and the card's states so the view can offer to lift them.
+type AttentionCard struct {
+	CardID        int64
+	NoteID        int64
+	Template      string
+	Question      string
+	Flagged       bool
+	FlagReason    string
+	Suspended     bool
+	SuspendReason string
+	BuriedUntil   time.Time
+	State         srs.State
+	Due           time.Time
 }
 
-// FlaggedCards returns the deck's flagged cards, rendered. The deck is
-// loaded first so an unknown deck 404s rather than answering an empty list.
-func (s *Service) FlaggedCards(ctx context.Context, userID, deckID int64) ([]FlaggedCard, error) {
+// AttentionCards returns the deck's flagged and suspended cards, rendered.
+// The deck is loaded first so an unknown deck 404s rather than answering an
+// empty list.
+func (s *Service) AttentionCards(ctx context.Context, userID, deckID int64) ([]AttentionCard, error) {
 	if _, err := s.decks.Get(ctx, userID, deckID); err != nil {
 		return nil, err
 	}
 
-	list, err := s.cards.ListFlagged(ctx, userID, deckID)
+	list, err := s.cards.ListNeedingAttention(ctx, userID, deckID)
 	if err != nil {
 		return nil, err
 	}
 
-	out := make([]FlaggedCard, 0, len(list))
+	out := make([]AttentionCard, 0, len(list))
 	for _, card := range list {
 		note, err := s.notes.Get(ctx, userID, card.NoteID)
 		if err != nil {
@@ -353,16 +357,18 @@ func (s *Service) FlaggedCards(ctx context.Context, userID, deckID int64) ([]Fla
 		if err != nil {
 			return nil, fmt.Errorf("render card %d: %w", card.ID, err)
 		}
-		out = append(out, FlaggedCard{
-			CardID:      card.ID,
-			NoteID:      card.NoteID,
-			Template:    card.Template,
-			Question:    rendered.Question,
-			Reason:      card.FlagReason,
-			Suspended:   card.Suspended,
-			BuriedUntil: card.BuriedUntil,
-			State:       card.State.State,
-			Due:         card.State.Due,
+		out = append(out, AttentionCard{
+			CardID:        card.ID,
+			NoteID:        card.NoteID,
+			Template:      card.Template,
+			Question:      rendered.Question,
+			Flagged:       card.Flagged,
+			FlagReason:    card.FlagReason,
+			Suspended:     card.Suspended,
+			SuspendReason: card.SuspendReason,
+			BuriedUntil:   card.BuriedUntil,
+			State:         card.State.State,
+			Due:           card.State.Due,
 		})
 	}
 	return out, nil

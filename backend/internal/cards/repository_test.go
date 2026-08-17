@@ -731,7 +731,7 @@ func TestSetBuriedUntilZeroUnburies(t *testing.T) {
 	}
 }
 
-func TestListFlaggedIsScopedToDeckAndOwner(t *testing.T) {
+func TestListNeedingAttentionCoversFlaggedAndSuspended(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 
@@ -740,19 +740,43 @@ func TestListFlaggedIsScopedToDeckAndOwner(t *testing.T) {
 		t.Fatalf("SetFlag: %v", err)
 	}
 
-	flagged, err := e.repo.ListFlagged(ctx, e.user, e.deck)
+	got, err := e.repo.ListNeedingAttention(ctx, e.user, e.deck)
 	if err != nil {
-		t.Fatalf("ListFlagged: %v", err)
+		t.Fatalf("ListNeedingAttention: %v", err)
 	}
-	if len(flagged) != 1 || flagged[0].FlagReason != "check this" {
-		t.Fatalf("flagged = %+v, want the one flagged card with its reason", flagged)
+	if len(got) != 1 || got[0].FlagReason != "check this" {
+		t.Fatalf("attention = %+v, want the one flagged card with its reason", got)
 	}
 
-	if flagged, _ := e.repo.ListFlagged(ctx, e.other, e.deck); len(flagged) != 0 {
-		t.Fatalf("another user saw flagged cards from this deck")
+	// A suspended-only card belongs in the set too, reason and all.
+	if err := e.repo.SetFlag(ctx, e.user, list[0].ID, false, ""); err != nil {
+		t.Fatalf("SetFlag off: %v", err)
 	}
-	if flagged, _ := e.repo.ListFlagged(ctx, e.user, e.deck+999); len(flagged) != 0 {
-		t.Fatalf("another deck saw this deck's flagged cards")
+	if err := e.repo.SetSuspended(ctx, e.user, list[0].ID, true, "resting"); err != nil {
+		t.Fatalf("SetSuspended: %v", err)
+	}
+	got, _ = e.repo.ListNeedingAttention(ctx, e.user, e.deck)
+	if len(got) != 1 || got[0].SuspendReason != "resting" || got[0].Flagged {
+		t.Fatalf("attention = %+v, want the suspended card with its reason", got)
+	}
+
+	// Resuming clears the reason and empties the set.
+	if err := e.repo.SetSuspended(ctx, e.user, list[0].ID, false, "ignored"); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	c, _ := e.repo.Get(ctx, e.user, list[0].ID)
+	if c.Suspended || c.SuspendReason != "" {
+		t.Fatalf("after resume: suspended=%v reason=%q", c.Suspended, c.SuspendReason)
+	}
+	if got, _ := e.repo.ListNeedingAttention(ctx, e.user, e.deck); len(got) != 0 {
+		t.Fatalf("resumed unflagged card still needs attention: %+v", got)
+	}
+
+	if got, _ := e.repo.ListNeedingAttention(ctx, e.other, e.deck); len(got) != 0 {
+		t.Fatalf("another user saw this deck's attention cards")
+	}
+	if got, _ := e.repo.ListNeedingAttention(ctx, e.user, e.deck+999); len(got) != 0 {
+		t.Fatalf("another deck saw this deck's attention cards")
 	}
 }
 

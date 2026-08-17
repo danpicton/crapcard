@@ -45,7 +45,7 @@ func (h *Handler) Register(mux *http.ServeMux, requireAuth Middleware) {
 	mux.Handle("POST /api/cards/{id}/suspend", requireAuth(http.HandlerFunc(h.Suspend)))
 	mux.Handle("POST /api/cards/{id}/flag", requireAuth(http.HandlerFunc(h.Flag)))
 	mux.Handle("POST /api/cards/{id}/bury", requireAuth(http.HandlerFunc(h.Bury)))
-	mux.Handle("GET /api/decks/{id}/flagged", requireAuth(http.HandlerFunc(h.Flagged)))
+	mux.Handle("GET /api/decks/{id}/attention", requireAuth(http.HandlerFunc(h.Attention)))
 }
 
 // Queue handles GET /api/decks/{id}/study/queue: every due card in the deck,
@@ -257,8 +257,9 @@ func (h *Handler) Answer(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Suspend handles POST /api/cards/{id}/suspend with {"suspended": bool} —
-// one endpoint for both directions, so resume cannot drift from suspend.
+// Suspend handles POST /api/cards/{id}/suspend with {"suspended": bool,
+// "reason": "…"} — one endpoint for both directions, so resume cannot drift
+// from suspend. The reason is optional and only kept while suspended.
 func (h *Handler) Suspend(w http.ResponseWriter, r *http.Request) {
 	u := auth.UserFromContext(r.Context())
 	cardID, ok := httpx.PathID(r, "id")
@@ -268,14 +269,19 @@ func (h *Handler) Suspend(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Suspended bool `json:"suspended"`
+		Suspended bool   `json:"suspended"`
+		Reason    string `json:"reason"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	if len(req.Reason) > MaxReasonLen {
+		httpx.WriteError(w, http.StatusBadRequest, "suspend reason is too long")
+		return
+	}
 
-	if err := h.svc.SetSuspended(r.Context(), u.ID, cardID, req.Suspended); err != nil {
+	if err := h.svc.SetSuspended(r.Context(), u.ID, cardID, req.Suspended, req.Reason); err != nil {
 		writeStudyError(w, err)
 		return
 	}
@@ -285,9 +291,9 @@ func (h *Handler) Suspend(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// MaxFlagReasonLen bounds the flag reason: a note to your future self, not an
+// MaxReasonLen bounds a flag or suspend reason: a note to your future self, not an
 // essay.
-const MaxFlagReasonLen = 2000
+const MaxReasonLen = 2000
 
 // Flag handles POST /api/cards/{id}/flag with {"flagged": bool, "reason": "…"}.
 // The reason is optional and only kept while the card stays flagged.
@@ -307,7 +313,7 @@ func (h *Handler) Flag(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if len(req.Reason) > MaxFlagReasonLen {
+	if len(req.Reason) > MaxReasonLen {
 		httpx.WriteError(w, http.StatusBadRequest, "flag reason is too long")
 		return
 	}
@@ -352,9 +358,10 @@ func (h *Handler) Bury(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Flagged handles GET /api/decks/{id}/flagged: the deck's flagged cards with
-// their reasons — the one place the reason is ever sent to the client.
-func (h *Handler) Flagged(w http.ResponseWriter, r *http.Request) {
+// Attention handles GET /api/decks/{id}/attention: the deck's flagged and
+// suspended cards with their reasons — the one place reasons are ever sent
+// to the client.
+func (h *Handler) Attention(w http.ResponseWriter, r *http.Request) {
 	u := auth.UserFromContext(r.Context())
 	deckID, ok := httpx.PathID(r, "id")
 	if !ok {
@@ -362,7 +369,7 @@ func (h *Handler) Flagged(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	list, err := h.svc.FlaggedCards(r.Context(), u.ID, deckID)
+	list, err := h.svc.AttentionCards(r.Context(), u.ID, deckID)
 	if err != nil {
 		writeStudyError(w, err)
 		return
@@ -371,15 +378,17 @@ func (h *Handler) Flagged(w http.ResponseWriter, r *http.Request) {
 	out := make([]map[string]any, 0, len(list))
 	for _, c := range list {
 		out = append(out, map[string]any{
-			"card_id":      c.CardID,
-			"note_id":      c.NoteID,
-			"template":     c.Template,
-			"question":     c.Question,
-			"reason":       c.Reason,
-			"suspended":    c.Suspended,
-			"buried_until": nullableTimeJSON(c.BuriedUntil),
-			"state":        c.State.String(),
-			"due":          c.Due,
+			"card_id":        c.CardID,
+			"note_id":        c.NoteID,
+			"template":       c.Template,
+			"question":       c.Question,
+			"flagged":        c.Flagged,
+			"flag_reason":    c.FlagReason,
+			"suspended":      c.Suspended,
+			"suspend_reason": c.SuspendReason,
+			"buried_until":   nullableTimeJSON(c.BuriedUntil),
+			"state":          c.State.String(),
+			"due":            c.Due,
 		})
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"cards": out})

@@ -10,6 +10,12 @@ resumed", no helper paragraphs restating a button's effect. Just "Reason",
 is the ceiling. (See commit 05d1f5f "Cut explanatory microcopy; keep labels
 terse" — this is a standing convention, not a one-off.)
 
+## Feature behaviour
+
+Never bundle one action into another implicitly (e.g. auto-flagging a card
+because a suspension carried a reason). Pairings are offered as explicit
+opt-ins; the user decides.
+
 ## UI state indicators
 
 Card states are shown as small glyph components, not text chips/pills:

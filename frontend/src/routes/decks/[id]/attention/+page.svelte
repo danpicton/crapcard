@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
-	import { api, type Deck, type FlaggedCard } from '$lib/api';
+	import { api, type Deck, type AttentionCard } from '$lib/api';
 	import { summariseMarkdown } from '$lib/noteSummary';
 	import { templateLabel } from '$lib/cloze';
 	import FlagIcon from '$lib/components/FlagIcon.svelte';
@@ -10,15 +10,15 @@
 	import CardPreviewModal from '$lib/components/CardPreviewModal.svelte';
 
 	/**
-	 * The deck's flagged cards, reasons and all — the only place a flag's
-	 * reason is ever shown. Each row offers to lift whatever the card is
-	 * under: the flag itself, a suspension, a burial.
+	 * The deck's flagged and suspended cards, reasons and all — the only
+	 * place reasons are ever shown. Each row offers to lift whatever the
+	 * card is under: the flag, the suspension, a burial.
 	 */
 
 	const deckId = Number(page.params.id);
 
 	let deck = $state<Deck | null>(null);
-	let cards = $state<FlaggedCard[]>([]);
+	let cards = $state<AttentionCard[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let previewNoteId = $state<number | null>(null);
@@ -27,14 +27,14 @@
 		loading = true;
 		error = null;
 		try {
-			const [loadedDeck, flagged] = await Promise.all([
+			const [loadedDeck, attention] = await Promise.all([
 				api.getDeck(deckId),
-				api.flaggedCards(deckId),
+				api.attentionCards(deckId),
 			]);
 			deck = loadedDeck;
-			cards = flagged.cards;
+			cards = attention.cards;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'could not load the flagged cards';
+			error = err instanceof Error ? err.message : 'could not load the cards';
 		} finally {
 			loading = false;
 		}
@@ -42,7 +42,7 @@
 
 	onMount(load);
 
-	function buriedNow(c: FlaggedCard): boolean {
+	function buriedNow(c: AttentionCard): boolean {
 		return c.buried_until !== null && new Date(c.buried_until).getTime() > Date.now();
 	}
 
@@ -64,8 +64,7 @@
 {:else if deck}
 	<div class="head">
 		<h1>
-			<FlagIcon size={18} title="" />
-			Flagged cards
+			Attention
 			<span class="muted deck-name">· {deck.name}</span>
 		</h1>
 	</div>
@@ -75,32 +74,45 @@
 	{/if}
 
 	{#if cards.length === 0}
-		<p class="muted">
-			Nothing is flagged in this deck. Flag a card while studying — or from the deck's card
-			list — to park it here with a note to your future self.
-		</p>
+		<p class="muted">No flagged or suspended cards.</p>
 	{:else}
-		<ul class="flagged">
+		<ul class="cards">
 			{#each cards as c (c.card_id)}
 				<li class="card">
 					<div class="card-text">
 						<p class="question">{summariseMarkdown(c.question)}</p>
-						{#if c.reason}
-							<p class="reason">{c.reason}</p>
-						{:else}
-							<p class="reason muted">No reason given.</p>
+						{#if c.flagged}
+							<p class="reason flag-reason">
+								<FlagIcon />
+								{c.flag_reason || 'Flagged'}
+							</p>
+						{/if}
+						{#if c.suspended}
+							<p class="reason suspend-reason">
+								<PauseIcon />
+								{c.suspend_reason || 'Suspended'}
+							</p>
 						{/if}
 					</div>
 					<div class="card-side">
 						<span class="meta muted small">
 							{templateLabel(c.template)}
-							{#if c.suspended}<PauseIcon />{/if}
 							{#if buriedNow(c)}<SpadeIcon />{/if}
 						</span>
 						<span class="actions">
 							<button type="button" class="link" onclick={() => (previewNoteId = c.note_id)}>
 								Preview
 							</button>
+							{#if c.flagged}
+								<button
+									type="button"
+									class="link"
+									onclick={() =>
+										act(() => api.flagCard(c.card_id, false), 'could not unflag the card')}
+								>
+									Unflag
+								</button>
+							{/if}
 							{#if c.suspended}
 								<button
 									type="button"
@@ -130,15 +142,6 @@
 									Unbury
 								</button>
 							{/if}
-							<button
-								type="button"
-								class="link"
-								title="Remove the flag (and its reason)"
-								onclick={() =>
-									act(() => api.flagCard(c.card_id, false), 'could not unflag the card')}
-							>
-								Unflag
-							</button>
 						</span>
 					</div>
 				</li>
@@ -178,7 +181,7 @@
 		font-weight: 400;
 	}
 
-	.flagged {
+	.cards {
 		list-style: none;
 		margin: 0;
 		padding: 0;
@@ -207,14 +210,24 @@
 		font-weight: 500;
 	}
 
-	/* The reason reads as a margin note: the user talking to themselves. */
+	/* Reasons read as margin notes: the user talking to themselves. */
 	.reason {
+		display: flex;
+		align-items: baseline;
+		gap: 0.375rem;
 		margin: 0.25rem 0 0;
 		font-size: 0.8125rem;
 		color: var(--text-2);
-		border-left: 2px solid #d0912b;
 		padding-left: 0.5rem;
 		white-space: pre-wrap;
+	}
+
+	.flag-reason {
+		border-left: 2px solid #d0912b;
+	}
+
+	.suspend-reason {
+		border-left: 2px solid var(--border-md);
 	}
 
 	.card-side {

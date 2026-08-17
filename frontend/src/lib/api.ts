@@ -99,15 +99,17 @@ export interface StudyCard {
 	previews: Record<string, AnswerPreview>;
 }
 
-/** One entry in a deck's flagged-cards view — the only place the reason is
- * ever sent to the client. */
-export interface FlaggedCard {
+/** One entry in a deck's attention view — a flagged or suspended card. The
+ * only place reasons are ever sent to the client. */
+export interface AttentionCard {
 	card_id: number;
 	note_id: number;
 	template: string;
 	question: string;
-	reason: string;
+	flagged: boolean;
+	flag_reason: string;
 	suspended: boolean;
+	suspend_reason: string;
 	buried_until: string | null;
 	state: string;
 	due: string;
@@ -322,9 +324,11 @@ export const api = {
 	undoAnswer: () => postJSON<StudyCard | null>(`/api/study/undo?${tzQuery()}`, {}),
 
 	// ── Card management ─────────────────────────────────────────────────────
-	suspendCard: (cardId: number, suspended: boolean) =>
+	/** The reason is only kept while the card stays suspended. */
+	suspendCard: (cardId: number, suspended: boolean, reason = '') =>
 		postJSON<{ card_id: number; suspended: boolean }>(`/api/cards/${cardId}/suspend`, {
 			suspended,
+			reason,
 		}),
 	/** The reason is only kept while the card stays flagged. */
 	flagCard: (cardId: number, flagged: boolean, reason = '') =>
@@ -341,8 +345,8 @@ export const api = {
 			`/api/cards/${cardId}/bury?${tzQuery()}`,
 			{ days },
 		),
-	flaggedCards: (deckId: number) =>
-		request<{ cards: FlaggedCard[] }>(`/api/decks/${deckId}/flagged`),
+	attentionCards: (deckId: number) =>
+		request<{ cards: AttentionCard[] }>(`/api/decks/${deckId}/attention`),
 
 	// ── Images ──────────────────────────────────────────────────────────────
 	/**
