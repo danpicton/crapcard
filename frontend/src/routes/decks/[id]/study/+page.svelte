@@ -21,4 +21,11 @@
 	.session {
 		margin-top: 0.75rem;
 	}
+
+	@media (max-width: 640px) {
+		.back {
+			display: inline-block;
+			padding: 0.5rem 0.75rem 0.5rem 0;
+		}
+	}
 </style>

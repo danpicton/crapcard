@@ -278,4 +278,39 @@
 		padding: 0.5rem 0.75rem;
 		border-radius: 4px;
 	}
+
+	@media (max-width: 640px) {
+		.back {
+			display: inline-block;
+			padding: 0.5rem 0.75rem 0.5rem 0;
+		}
+
+		h1 {
+			flex-wrap: wrap;
+		}
+
+		/* Card rows stack: question and reasons on top, meta and actions in a
+		   row below with finger-sized links. */
+		.card {
+			flex-direction: column;
+			gap: 0.5rem;
+		}
+
+		.card-side {
+			flex-direction: row;
+			align-items: center;
+			justify-content: space-between;
+			width: 100%;
+		}
+
+		.actions {
+			flex-wrap: wrap;
+			gap: 0.25rem;
+		}
+
+		.actions .link {
+			padding: 0.5rem 0.375rem;
+			font-size: 0.875rem;
+		}
+	}
 </style>

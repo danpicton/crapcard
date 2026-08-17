@@ -75,7 +75,10 @@
 
 <style>
 	.app {
+		/* dvh tracks the visible viewport as mobile browser chrome shows and
+		   hides; vh stays as the fallback for older engines. */
 		min-height: 100vh;
+		min-height: 100dvh;
 		display: flex;
 		flex-direction: column;
 	}
@@ -153,5 +156,29 @@
 
 	.muted {
 		color: var(--text-3);
+	}
+
+	@media (max-width: 640px) {
+		.topbar {
+			flex-wrap: wrap;
+			gap: 0.25rem 0.75rem;
+			padding: 0.625rem 1rem;
+		}
+
+		/* Room for a finger on every nav item; negative vertical margin keeps
+		   the bar's visual height unchanged. */
+		nav {
+			gap: 0.25rem;
+		}
+
+		nav a,
+		.link {
+			padding: 0.5rem;
+			margin: -0.375rem 0;
+		}
+
+		main {
+			padding: 1rem 1rem 3rem;
+		}
 	}
 </style>

@@ -397,6 +397,9 @@
 		border-radius: 6px;
 		padding: 1.5rem;
 		font-size: 1.125rem;
+		/* A long unbroken token (a URL, a chemical name) wraps rather than
+		   forcing the card wider than the screen. */
+		overflow-wrap: break-word;
 	}
 
 	.card-face.answer {
@@ -615,6 +618,56 @@
 	@media (max-width: 640px) {
 		.answers {
 			grid-template-columns: repeat(2, 1fr);
+		}
+
+		/* Grading happens by thumb: taller buttons, no hover to lean on. */
+		.answer-button {
+			padding: 0.875rem 0.5rem;
+			gap: 0.25rem;
+		}
+
+		.answer-label {
+			font-size: 1rem;
+		}
+
+		.reveal,
+		.undo-button {
+			padding: 0.875rem 1rem;
+			font-size: 1rem;
+		}
+
+		.session-head {
+			flex-wrap: wrap;
+			gap: 0.375rem 1rem;
+			margin-bottom: 1rem;
+		}
+
+		.counts {
+			flex-wrap: wrap;
+		}
+
+		.card-face {
+			padding: 1rem;
+		}
+
+		/* The housekeeping links become real tap targets, spread across the
+		   full width so neighbours are not grazed by accident. */
+		.card-tools {
+			justify-content: space-between;
+			gap: 0.25rem;
+			margin-top: 0.375rem;
+		}
+
+		.card-tools .link,
+		.under-answers .link {
+			padding: 0.625rem 0.5rem;
+			font-size: 0.875rem;
+		}
+
+		.offline-note {
+			flex-direction: column;
+			align-items: stretch;
+			text-align: center;
 		}
 	}
 </style>

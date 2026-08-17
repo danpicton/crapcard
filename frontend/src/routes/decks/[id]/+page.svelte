@@ -1028,6 +1028,14 @@
 		font-size: 0.6875rem;
 	}
 
+	.note-text {
+		/* Let the text column shrink and wrap instead of pushing the actions
+		   off the edge of a narrow screen. */
+		min-width: 0;
+		flex: 1 1 12rem;
+		overflow-wrap: break-word;
+	}
+
 	.note-front {
 		margin: 0;
 		font-weight: 500;
@@ -1152,5 +1160,76 @@
 		background: var(--danger-bg);
 		padding: 0.5rem 0.75rem;
 		border-radius: 4px;
+	}
+
+	@media (max-width: 640px) {
+		.back {
+			display: inline-block;
+			padding: 0.5rem 0.75rem 0.5rem 0;
+		}
+
+		.head {
+			flex-direction: column;
+			gap: 0.75rem;
+			margin: 0.75rem 0 1.25rem;
+		}
+
+		.head-actions {
+			flex-wrap: wrap;
+			align-items: center;
+			width: 100%;
+		}
+
+		.head-actions .button,
+		.head-actions .secondary {
+			padding: 0.55rem 1.1rem;
+		}
+
+		.list-head {
+			flex-wrap: wrap;
+			gap: 0.375rem 1rem;
+		}
+
+		/* Note rows stack; the action links become tap targets spanning the
+		   row so neighbours are not grazed by accident. */
+		.note-actions {
+			width: 100%;
+			flex-wrap: wrap;
+			justify-content: space-between;
+			gap: 0.25rem;
+		}
+
+		.note-actions .link {
+			padding: 0.5rem 0.375rem;
+			font-size: 0.875rem;
+		}
+
+		.card-row {
+			flex-wrap: wrap;
+			gap: 0.25rem 1rem;
+		}
+
+		.card-row-actions {
+			flex-wrap: wrap;
+			gap: 0.25rem;
+		}
+
+		.card-row-actions .link {
+			padding: 0.5rem 0.375rem;
+			font-size: 0.875rem;
+		}
+
+		.composer-actions {
+			flex-wrap: wrap;
+		}
+
+		.composer-actions .primary,
+		.composer-actions .secondary {
+			padding: 0.55rem 1.1rem;
+		}
+
+		.pager .secondary {
+			padding: 0.55rem 1.1rem;
+		}
 	}
 </style>

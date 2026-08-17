@@ -193,4 +193,23 @@
 	.link:hover {
 		color: var(--accent-tx);
 	}
+
+	@media (max-width: 640px) {
+		.backdrop {
+			padding: 1rem 0.75rem;
+		}
+
+		header .link {
+			padding: 0.5rem 0.625rem;
+			margin: -0.5rem -0.625rem;
+		}
+
+		.primary {
+			padding: 0.55rem 1.1rem;
+		}
+
+		.actions .link {
+			padding: 0.5rem;
+		}
+	}
 </style>
