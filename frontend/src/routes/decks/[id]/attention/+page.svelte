@@ -296,6 +296,13 @@
 			gap: 0.5rem;
 		}
 
+		/* The action links carry 0.5rem of invisible tap padding; the card's
+		   bottom padding shrinks to match, keeping the visible gap equal to
+		   the top. */
+		.card {
+			padding-bottom: 0.25rem;
+		}
+
 		/* Meta above, action buttons on the bottom row. */
 		.card-side {
 			align-items: stretch;

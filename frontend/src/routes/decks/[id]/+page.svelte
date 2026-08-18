@@ -1216,6 +1216,13 @@
 			gap: 0.375rem 1rem;
 		}
 
+		/* The bottom row's links carry 0.5rem of invisible tap padding, so
+		   the card's own bottom padding shrinks by the same amount to keep
+		   the visible gap equal to the top. */
+		.note {
+			padding-bottom: 0.25rem;
+		}
+
 		/* The studied-stamp sits above the buttons; the action links become
 		   tap targets spanning the bottom row so neighbours are not grazed
 		   by accident. */
