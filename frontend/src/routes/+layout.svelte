@@ -12,6 +12,20 @@
 
 	let checking = $state(true);
 
+	// The mobile nav drawer. Closed on every navigation.
+	let menuOpen = $state(false);
+
+	$effect(() => {
+		void page.url.pathname;
+		menuOpen = false;
+	});
+
+	// Study screens pin their controls to the bottom on mobile; the layout
+	// hands them a fixed-height column to do it in.
+	const studyRoute = $derived(
+		page.url.pathname === '/' || /^\/decks\/\d+\/study\/?$/.test(page.url.pathname),
+	);
+
 	// Routes reachable without a session.
 	const publicRoutes = ['/login', '/setup'];
 
@@ -40,8 +54,32 @@
 	}
 </script>
 
-<div class="app">
+<div class="app" class:study={studyRoute}>
 	<header class="topbar">
+		{#if auth.signedIn}
+			<button
+				type="button"
+				class="menu-toggle"
+				aria-label="Menu"
+				aria-expanded={menuOpen}
+				onclick={() => (menuOpen = !menuOpen)}
+			>
+				<svg
+					width="22"
+					height="22"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+					stroke-linecap="round"
+					aria-hidden="true"
+				>
+					<path d="M4 6h16" />
+					<path d="M4 12h16" />
+					<path d="M4 18h16" />
+				</svg>
+			</button>
+		{/if}
 		<a class="wordmark" href="/">crapcard</a>
 
 		{#if !sync.online}
@@ -55,7 +93,7 @@
 		{/if}
 
 		{#if auth.signedIn}
-			<nav>
+			<nav class:open={menuOpen}>
 				<a href="/" class:active={page.url.pathname === '/'}>Study</a>
 				<a href="/decks" class:active={page.url.pathname.startsWith('/decks')}>Decks</a>
 				<a href="/settings" class:active={page.url.pathname === '/settings'}>Settings</a>
@@ -64,7 +102,7 @@
 		{/if}
 	</header>
 
-	<main>
+	<main class:study={studyRoute}>
 		{#if checking}
 			<p class="muted">Loading…</p>
 		{:else}
@@ -91,6 +129,18 @@
 		padding: 0.75rem 1.25rem;
 		border-bottom: 1px solid var(--border);
 		background: var(--bg-toolbar);
+	}
+
+	/* The drawer toggle exists only on mobile. */
+	.menu-toggle {
+		display: none;
+		background: none;
+		border: none;
+		padding: 0.5rem;
+		margin: -0.5rem 0 -0.5rem -0.5rem;
+		color: var(--text);
+		cursor: pointer;
+		align-items: center;
 	}
 
 	.wordmark {
@@ -160,25 +210,63 @@
 
 	@media (max-width: 640px) {
 		.topbar {
-			flex-wrap: wrap;
-			gap: 0.25rem 0.75rem;
+			position: relative;
+			align-items: center;
+			gap: 0.625rem;
 			padding: 0.625rem 1rem;
 		}
 
-		/* Room for a finger on every nav item; negative vertical margin keeps
-		   the bar's visual height unchanged. */
-		nav {
-			gap: 0.25rem;
+		.menu-toggle {
+			display: flex;
 		}
 
-		nav a,
-		.link {
-			padding: 0.5rem;
-			margin: -0.375rem 0;
+		/* The nav lives behind the hamburger: a drawer dropping from the bar,
+		   one full-width tap target per item. */
+		nav {
+			display: none;
+		}
+
+		nav.open {
+			display: flex;
+			flex-direction: column;
+			align-items: stretch;
+			gap: 0;
+			position: absolute;
+			top: 100%;
+			left: 0;
+			right: 0;
+			background: var(--bg-toolbar);
+			border-bottom: 1px solid var(--border);
+			box-shadow: var(--shadow);
+			padding: 0.25rem 1rem 0.5rem;
+			font-size: 1rem;
+			z-index: 40;
+		}
+
+		nav.open a,
+		nav.open .link {
+			padding: 0.75rem 0.25rem;
+			text-align: left;
 		}
 
 		main {
 			padding: 1rem 1rem 3rem;
+		}
+
+		/* Study screens: the app becomes a fixed-height column so the session
+		   can pin its controls to the bottom and scroll the card instead. */
+		.app.study {
+			height: 100vh;
+			height: 100dvh;
+			overflow: hidden;
+		}
+
+		main.study {
+			display: flex;
+			flex-direction: column;
+			min-height: 0;
+			overflow: hidden;
+			padding-bottom: 0.75rem;
 		}
 	}
 </style>

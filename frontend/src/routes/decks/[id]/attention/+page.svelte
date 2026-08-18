@@ -296,15 +296,16 @@
 			gap: 0.5rem;
 		}
 
+		/* Meta above, action buttons on the bottom row. */
 		.card-side {
-			flex-direction: row;
-			align-items: center;
-			justify-content: space-between;
+			align-items: stretch;
 			width: 100%;
+			gap: 0.125rem;
 		}
 
 		.actions {
 			flex-wrap: wrap;
+			justify-content: space-between;
 			gap: 0.25rem;
 		}
 

@@ -129,6 +129,27 @@
 	}
 </script>
 
+{#snippet undoGlyph()}
+	<svg
+		width="18"
+		height="18"
+		viewBox="0 0 24 24"
+		fill="none"
+		stroke="currentColor"
+		stroke-width="2"
+		stroke-linecap="round"
+		stroke-linejoin="round"
+		aria-hidden="true"
+	>
+		<path d="M9 14 4 9l5-5" />
+		<path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
+	</svg>
+{/snippet}
+
+<!-- On mobile this is a fixed-height column: the card zone scrolls when it
+     must, and the controls stay under the thumb. On desktop it is an
+     ordinary block. -->
+<div class="study-screen">
 {#if !session.finished && (session.counts || session.remaining > 0)}
 	<div class="session-head">
 		{#if deckId === null && session.deckName !== null}
@@ -196,51 +217,54 @@
 {:else if session.card}
 	<!-- Keyed on the card so the editor remounts with new content: Milkdown
 	     takes its value at creation time and does not track prop changes. -->
-	{#key session.card.card_id}
-		<article class="card-face">
-			<Editor value={session.card.question} readonly />
-		</article>
-
-		{#if session.revealed}
-			<hr />
-			<article class="card-face answer">
-				<Editor value={session.card.answer} readonly />
+	<div class="card-zone">
+		{#key session.card.card_id}
+			<article class="card-face">
+				<Editor value={session.card.question} readonly />
 			</article>
-		{/if}
-	{/key}
+
+			{#if session.revealed}
+				<hr />
+				<article class="card-face answer">
+					<Editor value={session.card.answer} readonly />
+				</article>
+			{/if}
+		{/key}
+	</div>
 
 	{#if session.revealed}
-		<div class="answers">
-			{#each answers as answer (answer.key)}
+		<div class="answers-row">
+			{#if session.canUndo}
 				<button
 					type="button"
-					class="answer-button {answer.key}"
-					disabled={session.submitting}
-					onclick={() => session.answer(answer.rating)}
-					title="{answer.label} ({answer.rating}{answer.key === 'good' ? ' or space' : ''})"
-				>
-					<span class="answer-label">{answer.label}</span>
-					<span class="answer-interval">
-						<!-- A regraded card's previews were computed from state it
-						     no longer has; better no label than a wrong one. -->
-						{session.card?.stale_previews ? '' : (session.card?.previews[answer.key]?.label ?? '')}
-					</span>
-				</button>
-			{/each}
-		</div>
-		{#if session.canUndo}
-			<div class="under-answers">
-				<button
-					type="button"
-					class="link undo"
+					class="undo-button"
 					disabled={session.submitting}
 					onclick={() => session.undo()}
 					title="Undo (U)"
+					aria-label="Undo"
 				>
-					Undo
+					{@render undoGlyph()}
 				</button>
+			{/if}
+			<div class="answers">
+				{#each answers as answer (answer.key)}
+					<button
+						type="button"
+						class="answer-button {answer.key}"
+						disabled={session.submitting}
+						onclick={() => session.answer(answer.rating)}
+						title="{answer.label} ({answer.rating}{answer.key === 'good' ? ' or space' : ''})"
+					>
+						<span class="answer-label">{answer.label}</span>
+						<span class="answer-interval">
+							<!-- A regraded card's previews were computed from state it
+							     no longer has; better no label than a wrong one. -->
+							{session.card?.stale_previews ? '' : (session.card?.previews[answer.key]?.label ?? '')}
+						</span>
+					</button>
+				{/each}
 			</div>
-		{/if}
+		</div>
 	{:else}
 		<div class="reveal-row">
 			{#if session.canUndo}
@@ -252,20 +276,7 @@
 					title="Undo (U)"
 					aria-label="Undo"
 				>
-					<svg
-						width="18"
-						height="18"
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="2"
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						aria-hidden="true"
-					>
-						<path d="M9 14 4 9l5-5" />
-						<path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
-					</svg>
+					{@render undoGlyph()}
 				</button>
 			{/if}
 			<button type="button" class="primary reveal" onclick={reveal} title="Show answer (space)">
@@ -335,6 +346,7 @@
 		</button>
 	</div>
 {/if}
+</div>
 
 {#if cardModal !== null}
 	<FlagCardModal mode={cardModal} onconfirm={onCardAction} onclose={() => (cardModal = null)} />
@@ -385,12 +397,6 @@
 		color: var(--accent-tx);
 	}
 
-	.under-answers {
-		display: flex;
-		justify-content: flex-end;
-		margin-top: 0.5rem;
-	}
-
 	.card-face {
 		background: var(--bg-alt);
 		border: 1px solid var(--border);
@@ -412,11 +418,20 @@
 		margin: 1rem 0;
 	}
 
+	/* Undo sits beside the grades exactly as it sits beside Show answer, so
+	   the control keeps its place across the reveal. */
+	.answers-row {
+		display: flex;
+		align-items: stretch;
+		gap: 0.5rem;
+		margin-top: 1.5rem;
+	}
+
 	.answers {
+		flex: 1;
 		display: grid;
 		grid-template-columns: repeat(4, 1fr);
 		gap: 0.5rem;
-		margin-top: 1.5rem;
 	}
 
 	/* Grade colours follow spaced-repetition convention (Anki's) so the four
@@ -616,6 +631,22 @@
 	}
 
 	@media (max-width: 640px) {
+		/* The screen is a column pinned to the viewport (the layout provides
+		   the height): the card zone flexes and scrolls when the content is
+		   too tall, and the controls hold the bottom, thumb-reachable. */
+		.study-screen {
+			flex: 1;
+			min-height: 0;
+			display: flex;
+			flex-direction: column;
+		}
+
+		.card-zone {
+			flex: 1 1 auto;
+			min-height: 0;
+			overflow-y: auto;
+		}
+
 		.answers {
 			grid-template-columns: repeat(2, 1fr);
 		}
@@ -636,6 +667,11 @@
 			font-size: 1rem;
 		}
 
+		.answers-row,
+		.reveal-row {
+			margin-top: 0.75rem;
+		}
+
 		.session-head {
 			flex-wrap: wrap;
 			gap: 0.375rem 1rem;
@@ -650,16 +686,16 @@
 			padding: 1rem;
 		}
 
-		/* The housekeeping links become real tap targets, spread across the
-		   full width so neighbours are not grazed by accident. */
+		/* The housekeeping links become real tap targets on the very bottom
+		   row, spread across the full width so neighbours are not grazed by
+		   accident. */
 		.card-tools {
 			justify-content: space-between;
 			gap: 0.25rem;
 			margin-top: 0.375rem;
 		}
 
-		.card-tools .link,
-		.under-answers .link {
+		.card-tools .link {
 			padding: 0.625rem 0.5rem;
 			font-size: 0.875rem;
 		}

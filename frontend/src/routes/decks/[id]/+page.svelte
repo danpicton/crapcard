@@ -631,38 +631,50 @@
 	{:else}
 		<ul class="notes">
 			{#each notes as note (note.id)}
+				{@const hasGlyphs =
+					anyFlagged(note) ||
+					anySuspended(note) ||
+					(note.cards ?? []).some(buriedNow) ||
+					isClozeNote(note) ||
+					note.reversed}
 				<li class="note">
+					{#if hasGlyphs}
+						<span class="note-glyphs">
+							{#if anyFlagged(note)}<FlagIcon />{/if}
+							{#if anySuspended(note)}<PauseIcon />{/if}
+							{#if (note.cards ?? []).some(buriedNow)}<SpadeIcon />{/if}
+							{#if isClozeNote(note)}<ClozeIcon />{/if}
+							{#if note.reversed && !isClozeNote(note)}<BidirectionalIcon />{/if}
+						</span>
+					{/if}
 					<div class="note-text">
 						<p class="note-front">{summariseMarkdown(note.fields.front ?? '')}</p>
 						<p class="note-back muted small">{summariseMarkdown(note.fields.back ?? '')}</p>
 					</div>
-					<p class="note-meta muted">
-						{#if lastStudiedLabel(note.last_studied)}
-							Studied {lastStudiedLabel(note.last_studied)}
-						{:else}
-							Never studied
-						{/if}
-					</p>
-					<div class="note-actions">
-						{#if anyFlagged(note)}<FlagIcon />{/if}
-						{#if anySuspended(note)}<PauseIcon />{/if}
-						{#if (note.cards ?? []).some(buriedNow)}<SpadeIcon />{/if}
-						{#if isClozeNote(note)}<ClozeIcon />{/if}
-						{#if note.reversed && !isClozeNote(note)}<BidirectionalIcon />{/if}
-						<button
-							type="button"
-							class="link"
-							onclick={() => (manageNoteId = manageNoteId === note.id ? null : note.id)}
-						>
-							Cards
-						</button>
-						<button type="button" class="link" onclick={() => (previewNoteId = note.id)}>
-							Preview
-						</button>
-						<button type="button" class="link" onclick={() => startEdit(note)}>Edit</button>
-						<button type="button" class="link danger" onclick={() => remove(note)}>
-							Delete
-						</button>
+					<div class="note-foot">
+						<p class="note-meta muted">
+							{#if lastStudiedLabel(note.last_studied)}
+								Studied {lastStudiedLabel(note.last_studied)}
+							{:else}
+								Never studied
+							{/if}
+						</p>
+						<div class="note-actions">
+							<button
+								type="button"
+								class="link"
+								onclick={() => (manageNoteId = manageNoteId === note.id ? null : note.id)}
+							>
+								Cards
+							</button>
+							<button type="button" class="link" onclick={() => (previewNoteId = note.id)}>
+								Preview
+							</button>
+							<button type="button" class="link" onclick={() => startEdit(note)}>Edit</button>
+							<button type="button" class="link danger" onclick={() => remove(note)}>
+								Delete
+							</button>
+						</div>
 					</div>
 					{#if manageNoteId === note.id}
 						<ul class="cards-manager" transition:slide={{ duration: 150 }}>
@@ -964,16 +976,37 @@
 	.note {
 		position: relative;
 		display: flex;
-		flex-wrap: wrap;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: 1rem;
-		/* The extra bottom padding reserves the corner the studied-stamp
-		   sits in, so a long back line cannot run underneath it. */
-		padding: 0.75rem 0.75rem 1.375rem;
+		flex-direction: column;
+		gap: 0.5rem;
+		padding: 0.75rem;
 		border: 1px solid var(--border);
 		border-radius: 4px;
 		background: var(--bg-alt);
+	}
+
+	/* State glyphs live in the card's top-right corner, clear of the
+	   action buttons. */
+	.note-glyphs {
+		position: absolute;
+		top: 0.75rem;
+		right: 0.75rem;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.375rem;
+	}
+
+	/* Keep the first text line out from under the glyph corner. */
+	.note:has(.note-glyphs) .note-text {
+		padding-right: 5rem;
+	}
+
+	/* The card's bottom line: studied-stamp on the left, actions on the
+	   right. */
+	.note-foot {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 1rem;
 	}
 
 	.list-head {
@@ -1021,18 +1054,12 @@
 	}
 
 	.note-meta {
-		position: absolute;
-		right: 0.75rem;
-		bottom: 0.375rem;
 		margin: 0;
 		font-size: 0.6875rem;
 	}
 
 	.note-text {
-		/* Let the text column shrink and wrap instead of pushing the actions
-		   off the edge of a narrow screen. */
 		min-width: 0;
-		flex: 1 1 12rem;
 		overflow-wrap: break-word;
 	}
 
@@ -1068,7 +1095,6 @@
 
 	/* The per-note card manager unfolds full-width under the note row. */
 	.cards-manager {
-		flex-basis: 100%;
 		list-style: none;
 		margin: 0;
 		padding: 0.375rem 0 0;
@@ -1190,10 +1216,20 @@
 			gap: 0.375rem 1rem;
 		}
 
-		/* Note rows stack; the action links become tap targets spanning the
-		   row so neighbours are not grazed by accident. */
+		/* The studied-stamp sits above the buttons; the action links become
+		   tap targets spanning the bottom row so neighbours are not grazed
+		   by accident. */
+		.note-foot {
+			flex-direction: column;
+			align-items: stretch;
+			gap: 0;
+		}
+
+		.note-meta {
+			font-size: 0.75rem;
+		}
+
 		.note-actions {
-			width: 100%;
 			flex-wrap: wrap;
 			justify-content: space-between;
 			gap: 0.25rem;
