@@ -508,9 +508,9 @@
 			</div>
 			<div class="head-actions">
 				{#if attentionCount > 0}
-					<a class="flagged-link" href="/decks/{deckId}/attention">
+					<a class="secondary attention" href="/decks/{deckId}/attention" title="Attention">
 						<FlagIcon title="" />
-						Attention · {attentionCount}
+						{attentionCount}
 					</a>
 				{/if}
 				{#if counts && counts.total > 0}
@@ -1079,18 +1079,10 @@
 		flex-shrink: 0;
 	}
 
-	.flagged-link {
+	.attention {
 		display: inline-flex;
 		align-items: center;
 		gap: 0.375rem;
-		font-size: 0.875rem;
-		color: var(--text-2);
-		text-decoration: none;
-		padding: 0.4rem 0;
-	}
-
-	.flagged-link:hover {
-		color: var(--accent-tx);
 	}
 
 	/* The per-note card manager unfolds full-width under the note row. */
@@ -1203,6 +1195,7 @@
 		.head-actions {
 			flex-wrap: wrap;
 			align-items: center;
+			justify-content: flex-end;
 			width: 100%;
 		}
 
