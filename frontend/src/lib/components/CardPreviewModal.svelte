@@ -250,4 +250,27 @@
 		padding: 0.5rem 0.75rem;
 		border-radius: 4px;
 	}
+
+	@media (max-width: 640px) {
+		.backdrop {
+			padding: 1rem 0.75rem;
+		}
+
+		.modal {
+			padding: 1rem;
+		}
+
+		header .link {
+			padding: 0.5rem 0.625rem;
+			margin: -0.5rem -0.625rem;
+		}
+
+		.card-tabs {
+			flex-wrap: wrap;
+		}
+
+		.tab {
+			padding: 0.45rem 0.875rem;
+		}
+	}
 </style>

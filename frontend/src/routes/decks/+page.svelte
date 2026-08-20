@@ -276,4 +276,37 @@
 		padding: 0.5rem 0.75rem;
 		border-radius: 4px;
 	}
+
+	@media (max-width: 640px) {
+		/* Deck cards stack: name and counts on top, actions in a row below,
+		   with the Study button grown into a proper tap target. */
+		.card {
+			flex-direction: column;
+			gap: 0.75rem;
+		}
+
+		.new-deck {
+			gap: 0.75rem;
+		}
+
+		.deck-actions {
+			flex-direction: row;
+			align-items: center;
+			justify-content: space-between;
+			width: 100%;
+		}
+
+		.deck-actions .button {
+			padding: 0.55rem 1.25rem;
+		}
+
+		.deck-actions .link {
+			padding: 0.5rem;
+			margin: -0.5rem;
+		}
+
+		.counts {
+			flex-wrap: wrap;
+		}
+	}
 </style>

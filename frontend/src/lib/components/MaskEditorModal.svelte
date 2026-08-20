@@ -310,4 +310,34 @@
 		color: var(--accent-tx);
 	}
 
+	@media (max-width: 640px) {
+		.backdrop {
+			padding: 1rem 0.75rem;
+		}
+
+		.modal {
+			padding: 1rem;
+		}
+
+		header .link {
+			padding: 0.5rem 0.625rem;
+			margin: -0.5rem -0.625rem;
+		}
+
+		/* Deleting a mask happens by finger here, not a mouse pointer. */
+		.mask-delete {
+			width: 26px;
+			height: 26px;
+			font-size: 12px;
+		}
+
+		.primary {
+			padding: 0.55rem 1.1rem;
+		}
+
+		.actions .link {
+			padding: 0.5rem;
+		}
+	}
+
 </style>

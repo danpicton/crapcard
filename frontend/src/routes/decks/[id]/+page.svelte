@@ -508,9 +508,9 @@
 			</div>
 			<div class="head-actions">
 				{#if attentionCount > 0}
-					<a class="flagged-link" href="/decks/{deckId}/attention">
+					<a class="secondary attention" href="/decks/{deckId}/attention" title="Attention">
 						<FlagIcon title="" />
-						Attention · {attentionCount}
+						{attentionCount}
 					</a>
 				{/if}
 				{#if counts && counts.total > 0}
@@ -631,38 +631,50 @@
 	{:else}
 		<ul class="notes">
 			{#each notes as note (note.id)}
+				{@const hasGlyphs =
+					anyFlagged(note) ||
+					anySuspended(note) ||
+					(note.cards ?? []).some(buriedNow) ||
+					isClozeNote(note) ||
+					note.reversed}
 				<li class="note">
+					{#if hasGlyphs}
+						<span class="note-glyphs">
+							{#if anyFlagged(note)}<FlagIcon />{/if}
+							{#if anySuspended(note)}<PauseIcon />{/if}
+							{#if (note.cards ?? []).some(buriedNow)}<SpadeIcon />{/if}
+							{#if isClozeNote(note)}<ClozeIcon />{/if}
+							{#if note.reversed && !isClozeNote(note)}<BidirectionalIcon />{/if}
+						</span>
+					{/if}
 					<div class="note-text">
 						<p class="note-front">{summariseMarkdown(note.fields.front ?? '')}</p>
 						<p class="note-back muted small">{summariseMarkdown(note.fields.back ?? '')}</p>
 					</div>
-					<p class="note-meta muted">
-						{#if lastStudiedLabel(note.last_studied)}
-							Studied {lastStudiedLabel(note.last_studied)}
-						{:else}
-							Never studied
-						{/if}
-					</p>
-					<div class="note-actions">
-						{#if anyFlagged(note)}<FlagIcon />{/if}
-						{#if anySuspended(note)}<PauseIcon />{/if}
-						{#if (note.cards ?? []).some(buriedNow)}<SpadeIcon />{/if}
-						{#if isClozeNote(note)}<ClozeIcon />{/if}
-						{#if note.reversed && !isClozeNote(note)}<BidirectionalIcon />{/if}
-						<button
-							type="button"
-							class="link"
-							onclick={() => (manageNoteId = manageNoteId === note.id ? null : note.id)}
-						>
-							Cards
-						</button>
-						<button type="button" class="link" onclick={() => (previewNoteId = note.id)}>
-							Preview
-						</button>
-						<button type="button" class="link" onclick={() => startEdit(note)}>Edit</button>
-						<button type="button" class="link danger" onclick={() => remove(note)}>
-							Delete
-						</button>
+					<div class="note-foot">
+						<p class="note-meta muted">
+							{#if lastStudiedLabel(note.last_studied)}
+								Studied {lastStudiedLabel(note.last_studied)}
+							{:else}
+								Never studied
+							{/if}
+						</p>
+						<div class="note-actions">
+							<button
+								type="button"
+								class="link"
+								onclick={() => (manageNoteId = manageNoteId === note.id ? null : note.id)}
+							>
+								Cards
+							</button>
+							<button type="button" class="link" onclick={() => (previewNoteId = note.id)}>
+								Preview
+							</button>
+							<button type="button" class="link" onclick={() => startEdit(note)}>Edit</button>
+							<button type="button" class="link danger" onclick={() => remove(note)}>
+								Delete
+							</button>
+						</div>
 					</div>
 					{#if manageNoteId === note.id}
 						<ul class="cards-manager" transition:slide={{ duration: 150 }}>
@@ -964,16 +976,37 @@
 	.note {
 		position: relative;
 		display: flex;
-		flex-wrap: wrap;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: 1rem;
-		/* The extra bottom padding reserves the corner the studied-stamp
-		   sits in, so a long back line cannot run underneath it. */
-		padding: 0.75rem 0.75rem 1.375rem;
+		flex-direction: column;
+		gap: 0.5rem;
+		padding: 0.75rem;
 		border: 1px solid var(--border);
 		border-radius: 4px;
 		background: var(--bg-alt);
+	}
+
+	/* State glyphs live in the card's top-right corner, clear of the
+	   action buttons. */
+	.note-glyphs {
+		position: absolute;
+		top: 0.75rem;
+		right: 0.75rem;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.375rem;
+	}
+
+	/* Keep the first text line out from under the glyph corner. */
+	.note:has(.note-glyphs) .note-text {
+		padding-right: 5rem;
+	}
+
+	/* The card's bottom line: studied-stamp on the left, actions on the
+	   right. */
+	.note-foot {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 1rem;
 	}
 
 	.list-head {
@@ -1021,11 +1054,13 @@
 	}
 
 	.note-meta {
-		position: absolute;
-		right: 0.75rem;
-		bottom: 0.375rem;
 		margin: 0;
 		font-size: 0.6875rem;
+	}
+
+	.note-text {
+		min-width: 0;
+		overflow-wrap: break-word;
 	}
 
 	.note-front {
@@ -1044,23 +1079,14 @@
 		flex-shrink: 0;
 	}
 
-	.flagged-link {
+	.attention {
 		display: inline-flex;
 		align-items: center;
 		gap: 0.375rem;
-		font-size: 0.875rem;
-		color: var(--text-2);
-		text-decoration: none;
-		padding: 0.4rem 0;
-	}
-
-	.flagged-link:hover {
-		color: var(--accent-tx);
 	}
 
 	/* The per-note card manager unfolds full-width under the note row. */
 	.cards-manager {
-		flex-basis: 100%;
 		list-style: none;
 		margin: 0;
 		padding: 0.375rem 0 0;
@@ -1152,5 +1178,94 @@
 		background: var(--danger-bg);
 		padding: 0.5rem 0.75rem;
 		border-radius: 4px;
+	}
+
+	@media (max-width: 640px) {
+		.back {
+			display: inline-block;
+			padding: 0.5rem 0.75rem 0.5rem 0;
+		}
+
+		.head {
+			flex-direction: column;
+			gap: 0.75rem;
+			margin: 0.75rem 0 1.25rem;
+		}
+
+		.head-actions {
+			flex-wrap: wrap;
+			align-items: center;
+			justify-content: flex-end;
+			width: 100%;
+		}
+
+		.head-actions .button,
+		.head-actions .secondary {
+			padding: 0.55rem 1.1rem;
+		}
+
+		.list-head {
+			flex-wrap: wrap;
+			gap: 0.375rem 1rem;
+		}
+
+		/* The bottom row's links carry 0.5rem of invisible tap padding, so
+		   the card's own bottom padding shrinks by the same amount to keep
+		   the visible gap equal to the top. */
+		.note {
+			padding-bottom: 0.25rem;
+		}
+
+		/* The studied-stamp sits above the buttons; the action links become
+		   tap targets spanning the bottom row so neighbours are not grazed
+		   by accident. */
+		.note-foot {
+			flex-direction: column;
+			align-items: stretch;
+			gap: 0;
+		}
+
+		.note-meta {
+			font-size: 0.75rem;
+		}
+
+		.note-actions {
+			flex-wrap: wrap;
+			justify-content: space-between;
+			gap: 0.25rem;
+		}
+
+		.note-actions .link {
+			padding: 0.5rem 0.375rem;
+			font-size: 0.875rem;
+		}
+
+		.card-row {
+			flex-wrap: wrap;
+			gap: 0.25rem 1rem;
+		}
+
+		.card-row-actions {
+			flex-wrap: wrap;
+			gap: 0.25rem;
+		}
+
+		.card-row-actions .link {
+			padding: 0.5rem 0.375rem;
+			font-size: 0.875rem;
+		}
+
+		.composer-actions {
+			flex-wrap: wrap;
+		}
+
+		.composer-actions .primary,
+		.composer-actions .secondary {
+			padding: 0.55rem 1.1rem;
+		}
+
+		.pager .secondary {
+			padding: 0.55rem 1.1rem;
+		}
 	}
 </style>

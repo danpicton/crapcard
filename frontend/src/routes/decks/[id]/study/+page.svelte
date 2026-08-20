@@ -21,4 +21,22 @@
 	.session {
 		margin-top: 0.75rem;
 	}
+
+	@media (max-width: 640px) {
+		.back {
+			display: inline-block;
+			padding: 0.5rem 0.75rem 0.5rem 0;
+			flex-shrink: 0;
+		}
+
+		/* Pass the layout's fixed-height column through to the session so its
+		   bottom controls can pin to the viewport. */
+		.session {
+			flex: 1;
+			min-height: 0;
+			display: flex;
+			flex-direction: column;
+			margin-top: 0.5rem;
+		}
+	}
 </style>

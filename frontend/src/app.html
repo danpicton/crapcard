@@ -18,6 +18,11 @@
 			   clipping so that sub-screens (settings, admin) can scroll freely. */
 			html, body { margin: 0; padding: 0; height: 100%; }
 
+			/* Padding counts inside a declared width. Without this, any
+			   width:100% element with padding (the main column, full-width
+			   inputs) renders wider than the screen on mobile. */
+			*, *::before, *::after { box-sizing: border-box; }
+
 			/* ── Font families ───────────────────────────────────── */
 			:root {
 				--serif: "Crimson Pro", "Source Serif Pro", Georgia, serif;
@@ -638,6 +643,12 @@
 				background: var(--bg);
 				color: var(--text);
 				font-family: var(--sans);
+			}
+
+			/* Taps act immediately: no double-tap-to-zoom delay on controls,
+			   which matters most when grading cards in quick succession. */
+			button, a, select, input, textarea, label {
+				touch-action: manipulation;
 			}
 
 			/* Hide scrollbars on mobile — keep native-feel touch scrolling */

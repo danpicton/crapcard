@@ -101,4 +101,22 @@
 	.small {
 		font-size: 0.8125rem;
 	}
+
+	@media (max-width: 640px) {
+		.setting {
+			flex-direction: column;
+			align-items: stretch;
+			gap: 0.375rem;
+		}
+
+		.setting-label {
+			min-width: 0;
+		}
+
+		select {
+			min-width: 0;
+			width: 100%;
+			padding: 0.55rem 0.6rem;
+		}
+	}
 </style>

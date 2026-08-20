@@ -278,4 +278,47 @@
 		padding: 0.5rem 0.75rem;
 		border-radius: 4px;
 	}
+
+	@media (max-width: 640px) {
+		.back {
+			display: inline-block;
+			padding: 0.5rem 0.75rem 0.5rem 0;
+		}
+
+		h1 {
+			flex-wrap: wrap;
+		}
+
+		/* Card rows stack: question and reasons on top, meta and actions in a
+		   row below with finger-sized links. */
+		.card {
+			flex-direction: column;
+			gap: 0.5rem;
+		}
+
+		/* The action links carry 0.5rem of invisible tap padding; the card's
+		   bottom padding shrinks to match, keeping the visible gap equal to
+		   the top. */
+		.card {
+			padding-bottom: 0.25rem;
+		}
+
+		/* Meta above, action buttons on the bottom row. */
+		.card-side {
+			align-items: stretch;
+			width: 100%;
+			gap: 0.125rem;
+		}
+
+		.actions {
+			flex-wrap: wrap;
+			justify-content: space-between;
+			gap: 0.25rem;
+		}
+
+		.actions .link {
+			padding: 0.5rem 0.375rem;
+			font-size: 0.875rem;
+		}
+	}
 </style>
