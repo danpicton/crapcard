@@ -223,6 +223,39 @@
 	let deckDescription = $state('');
 	let savingDeck = $state(false);
 
+	// The last successfully loaded page of this deck, so an offline open
+	// still shows it.
+	const CACHE_KEY = `crapcard-deck:${deckId}`;
+
+	function cachePage() {
+		try {
+			localStorage.setItem(
+				CACHE_KEY,
+				JSON.stringify({ deck, notes, total, offset, counts, attention: attentionCount }),
+			);
+		} catch {
+			// Storage full: only offline resume degrades.
+		}
+	}
+
+	function restorePage(): boolean {
+		try {
+			const raw = localStorage.getItem(CACHE_KEY);
+			if (!raw) return false;
+			const saved = JSON.parse(raw);
+			if (!saved?.deck || !Array.isArray(saved.notes)) return false;
+			deck = saved.deck;
+			notes = saved.notes;
+			total = saved.total ?? saved.notes.length;
+			offset = saved.offset ?? 0;
+			counts = saved.counts ?? null;
+			attentionCount = saved.attention ?? 0;
+			return true;
+		} catch {
+			return false;
+		}
+	}
+
 	async function load() {
 		loading = true;
 		error = null;
@@ -244,9 +277,16 @@
 			if (notes.length === 0 && offset > 0) {
 				offset = Math.max(0, offset - pageSize);
 				await load();
+				return;
 			}
+			cachePage();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'could not load the deck';
+			if (err instanceof ApiError && err.status === 0) {
+				// Offline: the last-seen page beats an error.
+				if (!restorePage()) error = 'Offline — nothing cached for this deck yet.';
+			} else {
+				error = err instanceof Error ? err.message : 'could not load the deck';
+			}
 		} finally {
 			loading = false;
 		}
@@ -261,7 +301,13 @@
 			try {
 				startEdit(await api.getNote(Number(editParam)));
 			} catch (err) {
-				error = err instanceof Error ? err.message : 'could not open the card';
+				// Offline: the note may be on the cached page already.
+				const local = notes.find((n) => n.id === Number(editParam));
+				if (err instanceof ApiError && err.status === 0 && local) {
+					startEdit(local);
+				} else {
+					error = err instanceof Error ? err.message : 'could not open the card';
+				}
 			}
 		}
 	});

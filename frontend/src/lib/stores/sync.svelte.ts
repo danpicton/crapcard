@@ -1,4 +1,4 @@
-import { api, ApiError, type NoteInput, type Note, type AnswerResult } from '$lib/api';
+import { api, ApiError, onConnectivity, type NoteInput, type Note, type AnswerResult } from '$lib/api';
 
 /**
  * Offline awareness and the outbox.
@@ -151,7 +151,7 @@ export function createSyncStore(deps: SyncDeps = defaultDeps) {
 	 * everything queued behind it.
 	 */
 	async function flush(): Promise<void> {
-		if (flushing) return;
+		if (flushing || outbox.length === 0) return;
 		flushing = true;
 		try {
 			while (outbox.length > 0) {
@@ -199,6 +199,10 @@ export function createSyncStore(deps: SyncDeps = defaultDeps) {
 		/** Restore the outbox and start watching connectivity. */
 		init() {
 			restore();
+			// Every API call reports whether it reached the server, so offline
+			// is noticed on the first failed request even when the browser's
+			// own online flag is wrong.
+			onConnectivity((ok) => (ok ? markOnline() : markOffline()));
 			if (!listenersBound && typeof window !== 'undefined') {
 				listenersBound = true;
 				window.addEventListener('online', () => markOnline());

@@ -32,6 +32,22 @@
 	onMount(async () => {
 		theme.init();
 		sync.init();
+
+		// A cached session renders the app immediately — no waiting on the
+		// network — and the server check runs behind it, signing out only
+		// when the server definitively answers 401.
+		auth.init();
+		if (auth.signedIn) {
+			checking = false;
+			void prefs.load();
+			void auth.refresh().then(() => {
+				if (!auth.signedIn && !publicRoutes.includes(page.url.pathname)) {
+					void goto('/login');
+				}
+			});
+			return;
+		}
+
 		await auth.refresh();
 		if (auth.signedIn) await prefs.load();
 

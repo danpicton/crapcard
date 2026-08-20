@@ -13,6 +13,7 @@ describe('auth store', () => {
 	beforeEach(() => {
 		vi.stubGlobal('fetch', vi.fn());
 		auth.reset();
+		localStorage.clear();
 	});
 	afterEach(() => {
 		vi.unstubAllGlobals();
@@ -87,5 +88,51 @@ describe('auth store', () => {
 		// Leaving a stale user on screen after a logout the user asked for
 		// would be worse than a lost request.
 		expect(auth.user).toBeNull();
+	});
+
+	it('caches the session on refresh and adopts it on init', async () => {
+		vi.mocked(fetch).mockResolvedValue(
+			jsonResponse({ id: 1, username: 'dan', is_admin: true, created_at: '' }),
+		);
+		await auth.refresh();
+		const cached = localStorage.getItem('crapcard-user');
+		expect(cached).not.toBeNull();
+
+		// A later start adopts the cache without asking the network.
+		auth.reset();
+		localStorage.setItem('crapcard-user', cached!);
+		auth.init();
+
+		expect(auth.user?.username).toBe('dan');
+		expect(auth.ready).toBe(true);
+	});
+
+	it('keeps the cached session when the network is away', async () => {
+		localStorage.setItem(
+			'crapcard-user',
+			JSON.stringify({ id: 1, username: 'dan', is_admin: true, created_at: '' }),
+		);
+		auth.init();
+		vi.mocked(fetch).mockRejectedValue(new TypeError('offline'));
+
+		await auth.refresh();
+
+		// A network failure is not evidence about the session.
+		expect(auth.user?.username).toBe('dan');
+		expect(auth.error).toBeNull();
+	});
+
+	it('signs out — and drops the cache — when the server answers 401', async () => {
+		localStorage.setItem(
+			'crapcard-user',
+			JSON.stringify({ id: 1, username: 'dan', is_admin: true, created_at: '' }),
+		);
+		auth.init();
+		vi.mocked(fetch).mockResolvedValue(jsonResponse({ error: 'authentication required' }, 401));
+
+		await auth.refresh();
+
+		expect(auth.user).toBeNull();
+		expect(localStorage.getItem('crapcard-user')).toBeNull();
 	});
 });

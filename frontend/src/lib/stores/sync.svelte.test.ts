@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createSyncStore } from './sync.svelte';
-import { ApiError } from '$lib/api';
+import { api, ApiError } from '$lib/api';
 
 function testDeps() {
 	return {
@@ -95,6 +95,24 @@ describe('sync store', () => {
 
 		await s.flush();
 		expect(s.createdIdFor('ref-1')).toBe(42);
+	});
+
+	it('notices offline from any failed api call, and recovery from any response', async () => {
+		vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('offline')));
+		const s = createSyncStore(testDeps());
+		s.init();
+
+		await expect(api.config()).rejects.toMatchObject({ status: 0 });
+		expect(s.online).toBe(false);
+
+		// Any response at all — even an error status — means the server is
+		// reachable again.
+		vi.mocked(fetch).mockResolvedValue(new Response('{}', { status: 200 }));
+		await api.config();
+		expect(s.online).toBe(true);
+
+		s.reset();
+		vi.unstubAllGlobals();
 	});
 
 	it('persists the outbox so a closed tab loses nothing', async () => {

@@ -190,6 +190,18 @@ interface RequestOptions {
 	headers?: Record<string, string>;
 }
 
+/**
+ * Connectivity signal: every request reports its outcome here — a rejected
+ * fetch means the network is away, any response at all (even an error) means
+ * the server is reachable. The sync store subscribes so offline is detected
+ * from real traffic, not just navigator.onLine, which lies on some devices.
+ */
+let connectivityListener: ((online: boolean) => void) | null = null;
+
+export function onConnectivity(listener: (online: boolean) => void) {
+	connectivityListener = listener;
+}
+
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
 	let res: Response;
 	try {
@@ -203,8 +215,10 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 	} catch (err) {
 		// fetch rejects with TypeError when the network is unreachable. Wrap it
 		// so callers only ever have to handle one error type.
+		connectivityListener?.(false);
 		throw new ApiError(0, err instanceof Error ? err.message : 'network error');
 	}
+	connectivityListener?.(true);
 
 	// 204 carries no body — the study queue uses it to mean "nothing due".
 	if (res.status === 204) {

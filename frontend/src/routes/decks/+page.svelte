@@ -1,12 +1,15 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api, type Deck, type QueueCounts } from '$lib/api';
+	import { api, ApiError, type Deck, type QueueCounts } from '$lib/api';
 	import { auth } from '$lib/stores/auth.svelte';
 
 	interface DeckRow {
 		deck: Deck;
 		counts: QueueCounts | null;
 	}
+
+	// The last successfully loaded list, so an offline open still shows it.
+	const CACHE_KEY = 'crapcard-decks';
 
 	let rows = $state<DeckRow[]>([]);
 	let loading = $state(true);
@@ -15,6 +18,19 @@
 	let creating = $state(false);
 	let newName = $state('');
 	let newDescription = $state('');
+
+	function restore(): boolean {
+		try {
+			const raw = localStorage.getItem(CACHE_KEY);
+			if (!raw) return false;
+			const saved = JSON.parse(raw);
+			if (!Array.isArray(saved)) return false;
+			rows = saved as DeckRow[];
+			return true;
+		} catch {
+			return false;
+		}
+	}
 
 	async function load() {
 		loading = true;
@@ -29,8 +45,18 @@
 					counts: await api.deckCounts(deck.id).catch(() => null),
 				})),
 			);
+			try {
+				localStorage.setItem(CACHE_KEY, JSON.stringify(rows));
+			} catch {
+				// Storage full: only offline resume degrades.
+			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'could not load your decks';
+			if (err instanceof ApiError && err.status === 0) {
+				// Offline: the last-seen list beats an error.
+				if (!restore()) error = 'Offline — no decks cached yet.';
+			} else {
+				error = err instanceof Error ? err.message : 'could not load your decks';
+			}
 		} finally {
 			loading = false;
 		}

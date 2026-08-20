@@ -81,14 +81,13 @@ sw.addEventListener('fetch', (event) => {
 		return;
 	}
 
-	// Navigations: the network's copy when it is there, the cached shell when
-	// it is not — this is what makes the app open offline at any route.
+	// Navigations: the versioned shell straight from cache, so the app opens
+	// instantly at any route, online or off — waiting for the network to fail
+	// first is what makes an offline start crawl. New builds install a new
+	// cache and take over on activate, so updates still arrive.
 	if (request.mode === 'navigate') {
 		event.respondWith(
-			fetch(request).catch(async () => {
-				const shell = await caches.match('/');
-				return shell ?? Response.error();
-			}),
+			caches.match('/').then((shell) => shell ?? fetch(request)),
 		);
 	}
 });
