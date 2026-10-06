@@ -206,6 +206,10 @@ func (s *Service) DeckQueue(ctx context.Context, userID, deckID int64, h cards.H
 func (s *Service) QueueAnywhere(ctx context.Context, userID int64, h cards.Horizon) (*Queue, error) {
 	deckID, err := s.cards.NextDeckToStudy(ctx, userID, h)
 	if errors.Is(err, cards.ErrNotFound) {
+		// Keep a capped deck on the finished screen so Study more is available.
+		deckID, err = s.cards.NextDeckToStudy(ctx, userID, h, true)
+	}
+	if errors.Is(err, cards.ErrNotFound) {
 		return nil, ErrQueueEmpty
 	}
 	if err != nil {

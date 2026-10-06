@@ -419,3 +419,32 @@ func TestUndoHandsBackTheCardJustAnswered(t *testing.T) {
 		t.Fatalf("second undo = %v, want ErrNothingToUndo", err)
 	}
 }
+
+func TestCappedLandingQueueAndUndoAllowance(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	e.addNote(t, "q", "a", false)
+	e.addNote(t, "q2", "a2", false)
+	if _, err := decks.NewRepository(e.db).Update(ctx, e.user, e.deck, "Italian", "", 1); err != nil {
+		t.Fatal(err)
+	}
+	h := cards.HorizonAt(time.Now(), 0)
+	q, err := e.svc.DeckQueue(ctx, e.user, e.deck, h)
+	if err != nil || len(q.Cards) != 1 {
+		t.Fatalf("queue: %+v %v", q, err)
+	}
+	if _, err := e.svc.Answer(ctx, e.user, q.Cards[0].CardID, srs.RatingEasy, h); err != nil {
+		t.Fatal(err)
+	}
+	q, err = e.svc.QueueAnywhere(ctx, e.user, h)
+	if err != nil || len(q.Cards) != 0 || q.DeckID != e.deck {
+		t.Fatalf("capped landing: %+v %v", q, err)
+	}
+	if _, err := e.svc.Undo(ctx, e.user, h); err != nil {
+		t.Fatal(err)
+	}
+	q, err = e.svc.DeckQueue(ctx, e.user, e.deck, h)
+	if err != nil || len(q.Cards) != 1 || q.Counts.New != 1 {
+		t.Fatalf("undo: %+v %v", q, err)
+	}
+}

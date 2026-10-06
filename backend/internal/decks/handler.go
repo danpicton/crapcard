@@ -38,8 +38,9 @@ func (h *Handler) Register(mux *http.ServeMux, requireAuth Middleware) {
 
 // deckRequest is the shared body for create and update.
 type deckRequest struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
+	Name          string `json:"name"`
+	Description   string `json:"description"`
+	DailyNewLimit *int   `json:"daily_new_limit"`
 }
 
 // decodeDeckRequest reads and validates the body, writing the error response
@@ -48,6 +49,10 @@ func decodeDeckRequest(w http.ResponseWriter, r *http.Request) (deckRequest, boo
 	var req deckRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
+		return req, false
+	}
+	if req.DailyNewLimit != nil && (*req.DailyNewLimit < -1 || *req.DailyNewLimit > 100000) {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid daily new card limit")
 		return req, false
 	}
 	req.Name = strings.TrimSpace(req.Name)
@@ -102,7 +107,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	d, err := h.repo.Create(r.Context(), u.ID, req.Name, req.Description)
+	d, err := h.repo.Create(r.Context(), u.ID, req.Name, req.Description, req.limits()...)
 	if err != nil {
 		writeRepoError(w, err)
 		return
@@ -140,7 +145,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	d, err := h.repo.Update(r.Context(), u.ID, id, req.Name, req.Description)
+	d, err := h.repo.Update(r.Context(), u.ID, id, req.Name, req.Description, req.limits()...)
 	if err != nil {
 		writeRepoError(w, err)
 		return
@@ -167,10 +172,18 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 // publicDeck projects a Deck onto its JSON shape.
 func publicDeck(d *Deck) map[string]any {
 	return map[string]any{
-		"id":          d.ID,
-		"name":        d.Name,
-		"description": d.Description,
-		"created_at":  d.CreatedAt,
-		"updated_at":  d.UpdatedAt,
+		"id":              d.ID,
+		"name":            d.Name,
+		"description":     d.Description,
+		"daily_new_limit": d.DailyNewLimit,
+		"created_at":      d.CreatedAt,
+		"updated_at":      d.UpdatedAt,
 	}
+}
+
+func (r deckRequest) limits() []int {
+	if r.DailyNewLimit == nil {
+		return nil
+	}
+	return []int{*r.DailyNewLimit}
 }

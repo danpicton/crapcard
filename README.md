@@ -46,7 +46,12 @@ the two apps look and feel like siblings.
   created the moment both sides have content, and every pause persists the
   latest wording. The only buttons left are Done and Preview.
 - **Decks.** A note belongs to one deck; study sessions are per-deck, with a
-  paginated card list.
+  paginated card list. Set **New cards / day** when creating or editing a deck
+  (blank means unlimited, zero means reviews only). The cap counts distinct
+  cards first studied on your local day; scheduled reviews and learning retries
+  stay available. After finishing, **Study more** adds a chosen number of new
+  cards to today’s allowance without changing the deck’s daily setting.
+  Fetch a capped queue before going offline; expanding it needs a connection.
 - **Offline studying, without losing anything.** A study session fetches its
   whole due queue in one go and grades from a local copy, persisted across
   restarts — so reviewing keeps working with no network, including the
@@ -249,9 +254,13 @@ All routes need a session cookie except `/healthz` and the setup/login handshake
 | `GET` | `/api/study/queue` | Every due card in the deck you'd land on, rendered, or `204` |
 | `GET` | `/api/decks/{id}/study/next` | Next due card in one deck, or `204` |
 | `GET` | `/api/decks/{id}/study/queue` | Every due card in one deck, rendered (empty list when none) |
-| `GET` | `/api/decks/{id}/study/counts` | Queue counts |
+| `GET` | `/api/decks/{id}/study/counts` | Queue counts, with new cards capped by today’s remaining allowance |
+| `POST` | `/api/decks/{id}/study/more` | Add `{"count": 1..1000}` new cards to today’s allowance and return the queue |
 | `POST` | `/api/cards/{id}/answer` | `{"rating": 1..4}` |
 | `POST` | `/api/study/undo` | Revert the latest answer; returns the card, or `204` if nothing to undo |
+
+Deck create/update accepts `daily_new_limit` (`-1` unlimited, `0` reviews only,
+or a positive integer up to 100000). Omitting it on update preserves the setting.
 
 The study endpoints accept `?tz_offset=<minutes east of UTC>` (what
 JavaScript's `-getTimezoneOffset()` reports) so review cards can be gated on

@@ -59,6 +59,13 @@
 	}
 
 	/** Bury for a stretch the user picks — "not tomorrow, but soon". */
+	function studyMore() {
+		const raw = prompt("How many new cards?", "10");
+		if (raw === null) return;
+		const count = Number(raw);
+		if (Number.isInteger(count) && count > 0 && count <= 1000) void session.studyMore(count);
+	}
+
 	function buryMore() {
 		const raw = prompt('Bury for how many days?', '3');
 		if (raw === null) return;
@@ -206,6 +213,9 @@
 			</p>
 		{/if}
 		<div class="done-actions">
+			{#if session.deckId !== null}
+				<button type="button" class="primary" disabled={!sync.online || session.submitting} onclick={studyMore}>Study more</button>
+			{/if}
 			<a class="primary button" href="/decks">Go to your decks</a>
 			{#if session.canUndo}
 				<button type="button" class="link" onclick={() => session.undo()}>

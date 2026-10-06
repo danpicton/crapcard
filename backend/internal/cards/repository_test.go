@@ -808,3 +808,61 @@ func TestListForNotesGroupsCardsByNote(t *testing.T) {
 		t.Fatalf("empty id list returned cards")
 	}
 }
+
+func TestDailyNewLimitReviewsRetriesMoreAndRollover(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	now := time.Date(2026, 10, 6, 10, 0, 0, 0, time.UTC)
+	h := cards.HorizonAt(now, 120)
+	for i := 0; i < 4; i++ {
+		_, err := notes.NewRepository(e.db).Create(ctx, e.user, notes.CreateInput{DeckID: e.deck, Type: notes.TypeBasic, Fields: []notes.Field{{Name: "front", Value: "q"}, {Name: "back", Value: "a"}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := decks.NewRepository(e.db).Update(ctx, e.user, e.deck, "Italian", "", 1); err != nil {
+		t.Fatal(err)
+	}
+	due, err := e.repo.Due(ctx, e.user, e.deck, h, 100)
+	if err != nil || len(due) != 1 {
+		t.Fatalf("limited queue: %d, %v", len(due), err)
+	}
+	first := due[0]
+	scheduler := srs.NewScheduler(srs.DefaultParams())
+	result := scheduler.Review(first.State, now, srs.RatingAgain)
+	if err := e.repo.ApplyReview(ctx, e.user, first.ID, first.State, result.Card, result.Log); err != nil {
+		t.Fatal(err)
+	}
+	counts, err := e.repo.Counts(ctx, e.user, e.deck, h)
+	if err != nil || counts.New != 0 || counts.Learning != 1 {
+		t.Fatalf("counts: %+v %v", counts, err)
+	}
+	retryH := cards.HorizonAt(result.Card.Due.Add(time.Second), 120)
+	due, err = e.repo.Due(ctx, e.user, e.deck, retryH, 100)
+	if err != nil || len(due) != 1 || due[0].ID != first.ID {
+		t.Fatalf("retry: %v %v", due, err)
+	}
+	// A review is always available, including when the new allowance is zero.
+	if _, err := e.db.ExecContext(ctx, `UPDATE cards SET state=2, due=? WHERE id=(SELECT MAX(id) FROM cards WHERE deck_id=?)`, now, e.deck); err != nil {
+		t.Fatal(err)
+	}
+	due, err = e.repo.Due(ctx, e.user, e.deck, h, 100)
+	if err != nil || len(due) != 1 || due[0].State.State != srs.StateReview {
+		t.Fatalf("review: %v %v", due, err)
+	}
+	if err := e.repo.StudyMore(ctx, e.other, e.deck, h, 2); !errors.Is(err, cards.ErrNotFound) {
+		t.Fatalf("ownership: %v", err)
+	}
+	if err := e.repo.StudyMore(ctx, e.user, e.deck, h, 2); err != nil {
+		t.Fatal(err)
+	}
+	counts, err = e.repo.Counts(ctx, e.user, e.deck, h)
+	if err != nil || counts.New != 2 {
+		t.Fatalf("more: %+v %v", counts, err)
+	}
+	tomorrow := cards.HorizonAt(h.ReviewDueBefore.Add(time.Minute), 120)
+	counts, err = e.repo.Counts(ctx, e.user, e.deck, tomorrow)
+	if err != nil || counts.New != 1 {
+		t.Fatalf("rollover: %+v %v", counts, err)
+	}
+}

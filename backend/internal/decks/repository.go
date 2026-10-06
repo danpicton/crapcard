@@ -23,12 +23,13 @@ var ErrDuplicateName = errors.New("a deck with that name already exists")
 
 // Deck is a named collection of notes, and the unit a study session covers.
 type Deck struct {
-	ID          int64
-	UserID      int64
-	Name        string
-	Description string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID            int64
+	UserID        int64
+	Name          string
+	Description   string
+	DailyNewLimit int
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 // Repository provides access to the decks table.
@@ -41,11 +42,11 @@ func NewRepository(database *db.DB) *Repository {
 	return &Repository{db: database}
 }
 
-const deckColumns = `id, user_id, name, description, created_at, updated_at`
+const deckColumns = `id, user_id, name, description, daily_new_limit, created_at, updated_at`
 
 func scanDeck(row interface{ Scan(...any) error }) (*Deck, error) {
 	d := &Deck{}
-	if err := row.Scan(&d.ID, &d.UserID, &d.Name, &d.Description, &d.CreatedAt, &d.UpdatedAt); err != nil {
+	if err := row.Scan(&d.ID, &d.UserID, &d.Name, &d.Description, &d.DailyNewLimit, &d.CreatedAt, &d.UpdatedAt); err != nil {
 		return nil, err
 	}
 	return d, nil
@@ -58,10 +59,14 @@ func isUniqueViolation(err error) bool {
 }
 
 // Create inserts a new deck for the user.
-func (r *Repository) Create(ctx context.Context, userID int64, name, description string) (*Deck, error) {
+func (r *Repository) Create(ctx context.Context, userID int64, name, description string, dailyLimit ...int) (*Deck, error) {
+	limit := -1
+	if len(dailyLimit) > 0 {
+		limit = dailyLimit[0]
+	}
 	res, err := r.db.ExecContext(ctx,
-		`INSERT INTO decks(user_id, name, description) VALUES(?, ?, ?)`,
-		userID, name, description,
+		`INSERT INTO decks(user_id, name, description, daily_new_limit) VALUES(?, ?, ?, ?)`,
+		userID, name, description, limit,
 	)
 	if isUniqueViolation(err) {
 		return nil, ErrDuplicateName
@@ -110,11 +115,15 @@ func (r *Repository) List(ctx context.Context, userID int64) ([]*Deck, error) {
 }
 
 // Update renames a deck and replaces its description.
-func (r *Repository) Update(ctx context.Context, userID, id int64, name, description string) (*Deck, error) {
+func (r *Repository) Update(ctx context.Context, userID, id int64, name, description string, dailyLimit ...int) (*Deck, error) {
+	var limit any
+	if len(dailyLimit) > 0 {
+		limit = dailyLimit[0]
+	}
 	res, err := r.db.ExecContext(ctx,
-		`UPDATE decks SET name=?, description=?, updated_at=CURRENT_TIMESTAMP
+		`UPDATE decks SET name=?, description=?, daily_new_limit=COALESCE(?, daily_new_limit), updated_at=CURRENT_TIMESTAMP
 		 WHERE id=? AND user_id=?`,
-		name, description, id, userID,
+		name, description, limit, id, userID,
 	)
 	if isUniqueViolation(err) {
 		return nil, ErrDuplicateName

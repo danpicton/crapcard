@@ -220,6 +220,7 @@
 	// Deck header editing.
 	let editingDeck = $state(false);
 	let deckName = $state('');
+	let dailyNewLimit = $state<number | undefined>(undefined);
 	let deckDescription = $state('');
 	let savingDeck = $state(false);
 
@@ -379,6 +380,7 @@
 		if (!deck) return;
 		deckName = deck.name;
 		deckDescription = deck.description;
+		dailyNewLimit = (deck.daily_new_limit ?? -1) < 0 ? undefined : deck.daily_new_limit;
 		editingDeck = true;
 	}
 
@@ -390,7 +392,7 @@
 		savingDeck = true;
 		error = null;
 		try {
-			deck = await api.updateDeck(deckId, name, deckDescription.trim());
+			deck = await api.updateDeck(deckId, name, deckDescription.trim(), dailyNewLimit ?? -1);
 			editingDeck = false;
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'could not save the deck';
@@ -483,6 +485,9 @@
 				Description
 				<input bind:value={deckDescription} placeholder="optional" />
 			</label>
+			<label>New cards / day
+				<input type="number" min="0" max="100000" step="1" bind:value={dailyNewLimit} placeholder="Unlimited" />
+			</label>
 			<div class="composer-actions">
 				<button type="submit" class="primary" disabled={savingDeck}>
 					{savingDeck ? 'Saving…' : 'Save'}
@@ -499,7 +504,7 @@
 						type="button"
 						class="link rename"
 						onclick={startDeckEdit}
-						aria-label="Rename this deck"
+						aria-label="Edit this deck"
 					>
 						Edit
 					</button>

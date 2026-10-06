@@ -47,14 +47,14 @@ interface AnsweredCard {
 }
 
 /**
- * Answers predicting a return within this window put the card back into the
- * local queue — the learning loop ("Again" comes back in minutes) keeps
- * working offline. Longer intervals belong to future sessions.
+ * Fallback for a missing offline preview: assume the card is due tomorrow.
+ * Known previews returning today are kept in the local learning loop.
  */
-const REQUEUE_HORIZON_S = 60 * 60;
+const FALLBACK_INTERVAL_S = 24 * 60 * 60;
 
 interface SessionDeps {
 	fetchQueue: (deckId: number | null) => Promise<StudyQueue | null>;
+	studyMore?: (deckId: number, count: number) => Promise<StudyQueue>;
 	answerCard: (cardId: number, rating: number) => Promise<AnswerResult>;
 	undoAnswer: () => Promise<StudyCard | null>;
 	suspendCard: (cardId: number, suspended: boolean, reason: string) => Promise<unknown>;
@@ -74,6 +74,7 @@ interface SessionDeps {
 
 const defaultDeps: SessionDeps = {
 	fetchQueue: (deckId) => api.studyQueue(deckId),
+	studyMore: (deckId, count) => api.studyMore(deckId, count),
 	answerCard: (cardId, rating) => api.answerCard(cardId, rating),
 	undoAnswer: () => api.undoAnswer(),
 	suspendCard: (cardId, suspended, reason) => api.suspendCard(cardId, suspended, reason),
@@ -286,14 +287,16 @@ export function createSession(deckId: number | null, deps: SessionDeps = default
 					}
 					outboxId = deps.queueAnswer(card.card_id, rating);
 					intervalSeconds =
-						card.previews[ratingKey(rating)]?.interval_seconds ?? REQUEUE_HORIZON_S + 1;
+						card.previews[ratingKey(rating)]?.interval_seconds ?? FALLBACK_INTERVAL_S;
 				}
 
 				history.push({ card, rating, outboxId });
 				reviewed += 1;
 				error = null;
 				queue = queue.slice(1);
-				if (intervalSeconds <= REQUEUE_HORIZON_S) {
+				const midnight = new Date();
+				midnight.setHours(24, 0, 0, 0);
+				if (Date.now() + intervalSeconds * 1000 < midnight.getTime()) {
 					requeue(card, Date.now() + intervalSeconds * 1000);
 				}
 				revealed = false;
@@ -453,11 +456,26 @@ export function createSession(deckId: number | null, deps: SessionDeps = default
 			}
 		},
 
-		/**
-		 * Pick the session back up after an offline start with nothing
-		 * cached: replay the outbox first — the server must apply parked
-		 * answers before composing the queue — then fetch it.
-		 */
+		/** Add explicitly requested new cards after replaying parked answers. */
+		async studyMore(count: number) {
+			if (submitting || cardDeckId === null || !deps.studyMore) return;
+			submitting = true;
+			try {
+				await deps.flushOutbox();
+				const fetched = await deps.studyMore(cardDeckId, count);
+				queue = fetched.cards;
+				counts = fetched.counts;
+				revealed = false;
+				error = null;
+				persist();
+			} catch (err) {
+				error = err instanceof Error ? err.message : 'Could not load more cards';
+			} finally {
+				submitting = false;
+			}
+		},
+
+		/** Replay the outbox before fetching a queue after an offline start. */
 		async resume() {
 			if (submitting) return;
 			submitting = true;

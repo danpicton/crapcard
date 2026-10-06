@@ -306,12 +306,14 @@ func (r *Repository) Due(ctx context.Context, userID, deckID int64, h Horizon, l
 	}
 
 	args := append([]any{userID, deckID}, h.dueClauseArgs()...)
-	args = append(args, h.Now.UTC(), int(srs.StateNew), limit)
+	args = append(args, h.Now.UTC(), sql.Named("order_state", int(srs.StateNew)), sql.Named("queue_limit", limit))
+	args = append(args, h.quotaArgs()...)
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT `+cardColumns+` FROM cards
 		 WHERE user_id=? AND deck_id=? AND suspended=0 AND `+dueClause+` AND `+notBuriedClause+`
-		 ORDER BY CASE WHEN state=? THEN 1 ELSE 0 END, due, id
-		 LIMIT ?`,
+		 AND `+newEligibilitySQL("cards.")+`
+		 ORDER BY CASE WHEN state=@order_state THEN 1 ELSE 0 END, due, id
+		 LIMIT @queue_limit`,
 		args...)
 	if err != nil {
 		return nil, fmt.Errorf("due cards: %w", err)
@@ -339,13 +341,19 @@ func (r *Repository) Due(ctx context.Context, userID, deckID int64, h Horizon, l
 // over a fresh one.
 //
 // Returns ErrNotFound when nothing is due anywhere.
-func (r *Repository) NextDeckToStudy(ctx context.Context, userID int64, h Horizon) (int64, error) {
+func (r *Repository) NextDeckToStudy(ctx context.Context, userID int64, h Horizon, includeCapped ...bool) (int64, error) {
 	// Recency is measured across the deck's whole history, not just the cards
 	// still due: answering a card pushes it out of the due set, so ranking on
 	// the due cards alone would make the deck you just studied look untouched.
 	var deckID int64
 	args := append([]any{userID, userID}, h.dueClauseArgs()...)
 	args = append(args, h.Now.UTC())
+	eligibility := newEligibilitySQL("c.")
+	if len(includeCapped) > 0 && includeCapped[0] {
+		eligibility = "1"
+	} else {
+		args = append(args, h.quotaArgs()...)
+	}
 	err := r.db.QueryRowContext(ctx,
 		`SELECT ranked.deck_id
 		 FROM (
@@ -357,7 +365,7 @@ func (r *Repository) NextDeckToStudy(ctx context.Context, userID int64, h Horizo
 		 WHERE EXISTS (
 		   SELECT 1 FROM cards c
 		   WHERE c.user_id=? AND c.deck_id=ranked.deck_id AND c.suspended=0
-		     AND `+dueSQL("c.")+` AND `+notBuriedSQL("c.")+`
+		     AND `+dueSQL("c.")+` AND `+notBuriedSQL("c.")+` AND `+eligibility+`
 		 )
 		 ORDER BY ranked.recency DESC, ranked.deck_id
 		 LIMIT 1`,
@@ -382,17 +390,16 @@ func (r *Repository) NextDeckToStudy(ctx context.Context, userID int64, h Horizo
 // so it keeps being counted until it graduates.
 func (r *Repository) Counts(ctx context.Context, userID, deckID int64, h Horizon) (Counts, error) {
 	var c Counts
+	args := []any{int(srs.StateNew), h.Now.UTC(), int(srs.StateLearning), int(srs.StateRelearning), int(srs.StateReview), h.ReviewDueBefore.UTC(), userID, deckID, h.Now.UTC()}
+	args = append(args, h.quotaArgs()...)
 	err := r.db.QueryRowContext(ctx,
 		`SELECT
 		   COALESCE(SUM(CASE WHEN state=? AND due<=? THEN 1 ELSE 0 END), 0),
 		   COALESCE(SUM(CASE WHEN state IN (?, ?)        THEN 1 ELSE 0 END), 0),
 		   COALESCE(SUM(CASE WHEN state=? AND due<? THEN 1 ELSE 0 END), 0)
 		 FROM cards
-		 WHERE user_id=? AND deck_id=? AND suspended=0 AND `+notBuriedClause,
-		int(srs.StateNew), h.Now.UTC(),
-		int(srs.StateLearning), int(srs.StateRelearning),
-		int(srs.StateReview), h.ReviewDueBefore.UTC(),
-		userID, deckID, h.Now.UTC(),
+		 WHERE user_id=? AND deck_id=? AND suspended=0 AND `+notBuriedClause+` AND `+newEligibilitySQL("cards."),
+		args...,
 	).Scan(&c.New, &c.Learning, &c.Due)
 	if err != nil {
 		return c, fmt.Errorf("queue counts: %w", err)
@@ -713,4 +720,41 @@ func (r *Repository) ListForNotes(ctx context.Context, userID int64, noteIDs []i
 		out[c.NoteID] = append(out[c.NoteID], c)
 	}
 	return out, rows.Err()
+}
+
+// newEligibilitySQL caps only unseen cards; retries and reviews bypass it.
+// The review log counts distinct introductions, so repeated attempts cost no slots.
+func newEligibilitySQL(prefix string) string {
+	return `(` + prefix + `state<>0 OR EXISTS (
+ SELECT 1 FROM decks d WHERE d.id=` + prefix + `deck_id AND d.user_id=` + prefix + `user_id
+ AND (d.daily_new_limit<0 OR (
+ SELECT COUNT(*) FROM cards fresh
+ WHERE fresh.user_id=d.user_id AND fresh.deck_id=d.id
+ AND fresh.state=0 AND fresh.suspended=0 AND fresh.due<=@quota_now
+ AND (fresh.buried_until IS NULL OR fresh.buried_until<=@quota_now)
+ AND (fresh.due<` + prefix + `due OR (fresh.due=` + prefix + `due AND fresh.id<=` + prefix + `id))
+ ) <= MAX(0, d.daily_new_limit
+ + COALESCE((SELECT extra FROM study_extra WHERE deck_id=d.id AND day_end=@quota_end),0)
+ - (SELECT COUNT(DISTINCT l.card_id) FROM review_log l JOIN cards seen ON seen.id=l.card_id
+ WHERE seen.deck_id=d.id AND l.user_id=d.user_id AND l.state=0
+ AND l.reviewed_at>=@quota_start AND l.reviewed_at<@quota_end)))))`
+}
+
+func (h Horizon) quotaArgs() []any {
+	return []any{sql.Named("quota_now", h.Now.UTC()), sql.Named("quota_start", h.ReviewDueBefore.Add(-24*time.Hour).UTC()), sql.Named("quota_end", h.ReviewDueBefore.UTC())}
+}
+
+// StudyMore extends only today's new-card allowance, scoped to the deck owner.
+func (r *Repository) StudyMore(ctx context.Context, userID, deckID int64, h Horizon, n int) error {
+	res, err := r.db.ExecContext(ctx, `INSERT INTO study_extra(deck_id, day_end, extra)
+ SELECT id, ?, ? FROM decks WHERE id=? AND user_id=?
+ ON CONFLICT(deck_id, day_end) DO UPDATE SET extra=extra+excluded.extra`,
+		h.ReviewDueBefore.UTC(), n, deckID, userID)
+	if err != nil {
+		return err
+	}
+	if changed, _ := res.RowsAffected(); changed == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
