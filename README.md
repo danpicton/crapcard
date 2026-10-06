@@ -199,6 +199,12 @@ docker build -t crapcard .
 docker run -p 8080:8080 -v crapcard-data:/data crapcard
 ```
 
+### Command line
+
+Use the [CLI](docs/cli.md) to list decks and note types, create decks, add cards,
+and list or preview cards against a running server. It uses Python 3 and the
+existing HTTP API.
+
 ### Configuration
 
 | Variable | Default | Meaning |
