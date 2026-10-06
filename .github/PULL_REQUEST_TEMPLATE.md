@@ -12,7 +12,7 @@ Closes #
 
 ## Test plan
 
-<!-- What was run, and what proves the change works. Name the layer (Go tests in backend/, Vitest in frontend/, smoke run via scripts/smoke.sh). -->
+<!-- What was run, and what proves the change works. Name the layer (Go, Vitest, Python CLI, or smoke); see docs/testing.md. -->
 
 ## Risk & rollback
 

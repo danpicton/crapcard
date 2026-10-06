@@ -69,6 +69,20 @@ jobs:
       - name: Build
         run: npm run build
 
+  cli:
+    name: CLI (Python)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Test CLI
+        run: python3 -m unittest discover -s scripts -p 'test_crapcard.py'
+
   # ── Whole-stack smoke test ──────────────────────────────────────────────────
   # Builds the real artefact — frontend embedded in the Go binary — and drives
   # the study loop over HTTP, so an embedding or routing regression is caught
@@ -76,7 +90,7 @@ jobs:
   smoke:
     name: Smoke (embedded binary)
     runs-on: ubuntu-latest
-    needs: [backend, frontend]
+    needs: [backend, frontend, cli]
 
     steps:
       - uses: actions/checkout@v4

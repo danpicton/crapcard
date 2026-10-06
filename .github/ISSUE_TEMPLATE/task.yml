@@ -50,7 +50,7 @@ body:
     id: pointers
     attributes:
       label: Pointers
-      description: Relevant files, docs, test fixtures, or code patterns to follow. Note any CLAUDE.md convention the work touches.
+      description: Relevant files, docs, test fixtures, or code patterns to follow. Note any AGENTS.md convention the work touches.
       placeholder: |
         - backend/internal/study/service.go — grading and undo
         - frontend/src/lib/stores/sync.svelte.ts — offline outbox
@@ -58,4 +58,4 @@ body:
     id: tests
     attributes:
       label: Test expectations
-      description: Which test layer this lands in (Go tests in backend/internal/ or backend/cmd/server/, Vitest in frontend/src/, smoke run in scripts/smoke.sh) and what proves it works.
+      description: Name the observable seam, the first failing behaviour test, its test layer (Go, Vitest, CLI, or smoke), and what proves the work is complete. See docs/testing.md.

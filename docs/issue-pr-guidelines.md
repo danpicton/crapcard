@@ -11,9 +11,10 @@ Write every issue as though briefing someone brand new to the codebase. Concrete
 - **Acceptance criteria are checkable bullets.** "Done" must be decidable without asking the author. If a criterion can't be phrased as a tickable box, the issue isn't ready.
 - **State what's out of scope.** Agents (and enthusiastic humans) wander; an explicit fence is cheaper than review comments.
 - **Give pointers.** Relevant files, docs, test fixtures, or an example of the pattern to follow. Embedding a short code sample of the shape you want is high-leverage.
-- **Name the test layer.** Say which layer the work lands in — Go handler/service/repository tests in `backend/internal/`, whole-server HTTP tests in `backend/cmd/server/`, Vitest unit tests in `frontend/src/`, or the embedded-binary smoke run in `scripts/smoke.sh` — and what proves it works.
+- **Name the test layer.** Say which layer the work lands in — Go handler/service/repository tests in `backend/internal/`, whole-server HTTP tests in `backend/cmd/server/`, Vitest unit tests in `frontend/src/`, CLI tests in `scripts/test_crapcard.py`, or the embedded-binary smoke run in `scripts/smoke.sh` — and what proves it works.
+- **Name the first failing behaviour.** For a feature or bug fix, identify the observable test seam and the test that should go red before implementation. Follow [the TDD workflow](testing.md).
 - **Scope narrowly.** "Fix the scheduling" is a bad issue; "carry the learning-step interval through undo in `backend/internal/study/service.go`" is a good one. Split rather than broaden.
-- **Point at the conventions the work touches.** [`CLAUDE.md`](../CLAUDE.md) holds the standing ones — terse UI labels with no explanatory microcopy, no action implicitly bundled into another, card states as glyph components rather than text chips. An issue that would breach one should say so deliberately.
+- **Point at the conventions the work touches.** [`AGENTS.md`](../AGENTS.md) holds the standing ones — terse UI labels with no explanatory microcopy, no action implicitly bundled into another, card states as glyph components rather than text chips. An issue that would breach one should say so deliberately.
 
 ## PRs
 

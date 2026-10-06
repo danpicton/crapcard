@@ -1,9 +1,10 @@
 .PHONY: test lint build run smoke docker
 
-# Everything: unit suites both sides, then the whole stack as one binary.
+# Everything: backend, frontend and CLI tests, then the whole stack as one binary.
 test:
 	$(MAKE) -C backend test
 	cd frontend && npm test
+	python3 -m unittest discover -s scripts -p 'test_crapcard.py'
 	$(MAKE) smoke
 
 lint:

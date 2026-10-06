@@ -6,6 +6,7 @@ A spaced-repetition flashcard app, in the shape of [crapnote](https://github.com
 |---|---|
 | Frontend | Svelte 5 (SvelteKit), Milkdown, Vitest |
 | Backend | Go 1.24, `net/http` stdlib router |
+| CLI | Python 3 standard library; uses the HTTP API |
 | Scheduling | [FSRS](https://github.com/open-spaced-repetition/go-fsrs) via `go-fsrs/v3` |
 | Database | SQLite (images stored as blobs alongside everything else) |
 | Deployment | Single Docker container; Go binary with the Svelte build embedded via `go:embed` |
@@ -83,11 +84,8 @@ the two apps look and feel like siblings.
 - **Signing in lands on a card.** The next thing due, from the deck you were
   last working through.
 - **Multi-user.** Sessions, per-user scoping on every query.
-
-### Not yet
-
-Text cloze and image cloze deletion. They are the next feature, and the data
-model was built for them — see below.
+- **Command-line authoring.** The Python CLI can list and create decks, list
+  note types, and add, list or preview cards through the same HTTP API.
 
 ---
 
@@ -96,7 +94,8 @@ model was built for them — see below.
 ```
 /
 ├── backend/
-│   ├── cmd/server/          # main entrypoint, HTTP mux, embedded UI
+│   ├── cmd/server/          # main entrypoint and HTTP mux
+│   │   └── ui/build/        # go:embed target, populated from frontend build
 │   ├── internal/
 │   │   ├── auth/            # users, sessions, login, middleware
 │   │   ├── cards/           # the scheduled items + FSRS state + review log
@@ -108,10 +107,12 @@ model was built for them — see below.
 │   │   ├── notes/           # authored content + note types + card generation
 │   │   ├── srs/             # the scheduler, wrapping go-fsrs
 │   │   └── study/           # the review loop
-│   ├── static/              # go:embed target — populated from frontend build
 │   └── Makefile
 ├── frontend/                # SvelteKit app
-├── scripts/smoke.sh         # end-to-end check against a built binary
+├── scripts/
+│   ├── crapcard.py          # Python CLI
+│   ├── test_crapcard.py     # CLI tests
+│   └── smoke.sh            # end-to-end check against a built binary
 └── Dockerfile               # multi-stage: node → go (CGO) → distroless/cc
 ```
 
@@ -119,8 +120,8 @@ model was built for them — see below.
 
 ## How the card model works
 
-This is the part worth understanding, because it is what makes cloze an
-additive change rather than a rewrite.
+This is the part worth understanding, because it made cloze an additive change
+rather than a rewrite.
 
 A **note** is what you author. A **card** is what gets scheduled. One note
 produces one or more cards, decided by its **note type**:
@@ -136,20 +137,22 @@ A note type answers exactly two questions — which cards does this note produce
 review queue, the scheduler and the API never learn what a note type *is*. They
 deal in cards and an opaque template string.
 
-Adding cloze therefore means registering another `Generator` in
-`internal/notes/notetype.go`, which produces `cloze:1`, `cloze:2`, … templates
-from a single text field. Nothing in `study`, `srs` or `cards` changes.
+Text and image cloze use generators in `internal/notes/notetype.go`. Text
+cloze produces `cloze:1`, `cloze:2`, … templates from deletions in the front
+field. The `study`, `srs` and `cards` packages handle those cards through the
+same interfaces as basic cards.
 
 Image sizing rides in the image URL as `?w=<pixels>` rather than in markdown
 syntax or an HTML tag. That keeps a card plain CommonMark — any other renderer
 still shows the image, alt text stays real alt text, and no user-authored HTML
 is ever rendered from our own origin. The server ignores the parameter.
 
-Three schema decisions exist to support that:
+These schema decisions keep note types extensible:
 
 - **Fields are rows, not columns** (`note_fields`: `note_id, ord, name, value`).
-  A basic note has `front`/`back`; a cloze note will have one `text` field, and
-  image cloze will add an image reference plus regions. No migration per type.
+  Basic and text cloze notes use `front`/`back`; image cloze uses image
+  references in the front field and mask regions in the note config. No
+  migration per type.
 - **Per-note options are JSON** (`notes.config`). `reversed` lives there today;
   cloze options join it without a schema change.
 - **Editing a note never resets scheduling.** On save, cards whose template
@@ -210,6 +213,11 @@ Use the [CLI](docs/cli.md) to list decks and note types, create decks, add cards
 and list or preview cards against a running server. It uses Python 3 and the
 existing HTTP API.
 
+```bash
+python3 scripts/crapcard.py --help
+python3 scripts/crapcard.py decks list
+```
+
 ### Configuration
 
 | Variable | Default | Meaning |
@@ -222,13 +230,17 @@ existing HTTP API.
 ## Tests
 
 ```bash
+make test                            # backend, frontend, CLI, and smoke
 cd backend  && make test && make lint
 cd frontend && npm test && npm run check
+python3 -m unittest discover -s scripts -p 'test_crapcard.py'
 ./scripts/smoke.sh /path/to/server     # whole stack, real binary
 ```
 
 The whole thing was built test-first, red then green, one vertical slice at a
-time.
+time. Follow [the testing workflow](docs/testing.md) for future changes.
+See [the glossary](GLOSSARY.md) for domain terms and [the ADRs](docs/adr/)
+for architectural decisions.
 
 ---
 
