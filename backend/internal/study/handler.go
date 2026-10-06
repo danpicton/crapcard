@@ -35,6 +35,7 @@ type Middleware func(http.Handler) http.Handler
 
 // Register mounts the study routes.
 func (h *Handler) Register(mux *http.ServeMux, requireAuth Middleware) {
+	mux.Handle("POST /api/decks/{id}/study/more", requireAuth(http.HandlerFunc(h.More)))
 	mux.Handle("GET /api/study/next", requireAuth(http.HandlerFunc(h.NextAnywhere)))
 	mux.Handle("GET /api/decks/{id}/study/next", requireAuth(http.HandlerFunc(h.Next)))
 	mux.Handle("GET /api/decks/{id}/study/counts", requireAuth(http.HandlerFunc(h.Counts)))
@@ -450,4 +451,36 @@ func FormatInterval(d time.Duration) string {
 	default:
 		return fmt.Sprintf("%.1fy", d.Hours()/24/365)
 	}
+}
+
+// More grants an explicit number of additional new cards for this local day.
+func (h *Handler) More(w http.ResponseWriter, r *http.Request) {
+	u := auth.UserFromContext(r.Context())
+	id, ok := httpx.PathID(r, "id")
+	if !ok {
+		httpx.WriteError(w, 404, "deck not found")
+		return
+	}
+	var req struct {
+		Count int `json:"count"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Count < 1 || req.Count > 1000 {
+		httpx.WriteError(w, 400, "count must be between 1 and 1000")
+		return
+	}
+	horizon := h.horizon(r)
+	if _, err := h.svc.decks.Get(r.Context(), u.ID, id); err != nil {
+		writeStudyError(w, err)
+		return
+	}
+	if err := h.svc.cards.StudyMore(r.Context(), u.ID, id, horizon, req.Count); err != nil {
+		writeStudyError(w, err)
+		return
+	}
+	q, err := h.svc.DeckQueue(r.Context(), u.ID, id, horizon)
+	if err != nil {
+		writeStudyError(w, err)
+		return
+	}
+	writeQueue(w, q)
 }

@@ -200,3 +200,25 @@ func TestDeleteDeckOfAnotherUserIs404(t *testing.T) {
 		t.Fatalf("another user's deck was deleted: %v", err)
 	}
 }
+
+func TestDailyNewLimitSetting(t *testing.T) {
+	env := newTestEnv(t)
+	for _, body := range []string{`{"name":"bad","daily_new_limit":-2}`, `{"name":"bad","daily_new_limit":1.5}`, `{"name":"bad","daily_new_limit":100001}`} {
+		rec := env.serve(t, env.user, http.MethodPost, "/api/decks", body)
+		if rec.Code != 400 {
+			t.Fatalf("invalid limit: %d %s", rec.Code, rec.Body.String())
+		}
+	}
+	d, err := env.repo.Create(context.Background(), env.user, "Limited", "", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err = env.repo.Update(context.Background(), env.user, d.ID, "Renamed", "")
+	if err != nil || d.DailyNewLimit != 3 {
+		t.Fatalf("omitted limit should survive: %+v %v", d, err)
+	}
+	d, err = env.repo.Update(context.Background(), env.user, d.ID, "Renamed", "", 0)
+	if err != nil || d.DailyNewLimit != 0 {
+		t.Fatalf("zero limit: %+v %v", d, err)
+	}
+}

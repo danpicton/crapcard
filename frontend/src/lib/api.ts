@@ -26,6 +26,7 @@ export class ApiError extends Error {
 }
 
 export interface Deck {
+	daily_new_limit?: number;
 	id: number;
 	name: string;
 	description: string;
@@ -271,10 +272,10 @@ export const api = {
 	// ── Decks ───────────────────────────────────────────────────────────────
 	listDecks: () => request<Deck[]>('/api/decks'),
 	getDeck: (id: number) => request<Deck>(`/api/decks/${id}`),
-	createDeck: (name: string, description = '') =>
-		postJSON<Deck>('/api/decks', { name, description }),
-	updateDeck: (id: number, name: string, description = '') =>
-		postJSON<Deck>(`/api/decks/${id}`, { name, description }, 'PUT'),
+	createDeck: (name: string, description = '', daily_new_limit = -1) =>
+		postJSON<Deck>('/api/decks', { name, description, daily_new_limit }),
+	updateDeck: (id: number, name: string, description = '', daily_new_limit?: number) =>
+		postJSON<Deck>(`/api/decks/${id}`, { name, description, daily_new_limit }, 'PUT'),
 	deleteDeck: (id: number) => request<null>(`/api/decks/${id}`, { method: 'DELETE' }),
 
 	// ── Notes ───────────────────────────────────────────────────────────────
@@ -311,6 +312,8 @@ export const api = {
 	 * can run without the network. Pass null for the deck the user would
 	 * land on (null result when nothing is due anywhere).
 	 */
+	studyMore: (deckId: number, count: number) =>
+		postJSON<StudyQueue>(`/api/decks/${deckId}/study/more?${tzQuery()}`, { count }),
 	studyQueue: (deckId: number | null) =>
 		deckId === null
 			? request<StudyQueue | null>(`/api/study/queue?${tzQuery()}`)

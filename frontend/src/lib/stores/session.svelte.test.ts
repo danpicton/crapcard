@@ -523,3 +523,45 @@ describe('card actions during study', () => {
 		expect(deps.queueSuspend).not.toHaveBeenCalled();
 	});
 });
+
+describe('Study more', () => {
+ it('flushes parked answers before expanding the finished deck queue', async () => {
+  const deps = { ...testDeps(), studyMore: vi.fn().mockResolvedValue(studyQueue([card({card_id: 2})])) };
+  deps.fetchQueue.mockResolvedValue(studyQueue([]));
+  const session = createSession(1, deps);
+  await session.start();
+  expect(session.finished).toBe(true);
+  await session.studyMore(5);
+  expect(deps.studyMore).toHaveBeenCalledWith(1, 5);
+  expect(deps.flushOutbox.mock.invocationCallOrder[0]).toBeLessThan(deps.studyMore.mock.invocationCallOrder[0]);
+  expect(session.card?.card_id).toBe(2);
+  expect(session.finished).toBe(false);
+ });
+ it('retains the finished state and reports a failed expansion', async () => {
+  const deps = { ...testDeps(), studyMore: vi.fn().mockRejectedValue(new ApiError(0, 'offline')) };
+  deps.fetchQueue.mockResolvedValue(studyQueue([]));
+  const session = createSession(1, deps);
+  await session.start();
+  await session.studyMore(5);
+  expect(session.finished).toBe(true);
+  expect(session.error).toBeTruthy();
+  expect(session.submitting).toBe(false);
+ });
+});
+
+describe('same-day retries', () => {
+ it('keeps a retry due later today even when it is over an hour away', async () => {
+  vi.useFakeTimers();
+  try {
+   vi.setSystemTime(new Date(2026, 9, 6, 9));
+   const deps = testDeps();
+   deps.answerCard.mockResolvedValue(answerResult({interval_seconds: 7200, state: 'learning'}));
+   const session = createSession(1, deps);
+   await session.start();
+   session.reveal();
+   await session.answer(1);
+   expect(session.finished).toBe(false);
+   expect(session.card?.card_id).toBe(1);
+  } finally { vi.useRealTimers(); }
+ });
+});

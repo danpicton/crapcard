@@ -375,3 +375,23 @@ func TestAttentionEndpointListsFlaggedAndSuspendedWithReasons(t *testing.T) {
 		t.Fatalf("another user's deck: %d, want 404", rec.Code)
 	}
 }
+
+func TestStudyMoreValidationAndOwnership(t *testing.T) {
+	e := newEnv(t)
+	e.addNote(t, "q", "a", false)
+	path := "/api/decks/" + itoa(e.deck) + "/study/more"
+	for _, body := range []string{`{}`, `{"count":0}`, `{"count":-1}`, `{"count":1001}`, `{"count":1.5}`, `oops`} {
+		rec := e.serve(t, e.user, http.MethodPost, path, body)
+		if rec.Code != 400 {
+			t.Fatalf("%s: %d %s", body, rec.Code, rec.Body.String())
+		}
+	}
+	rec := e.serve(t, e.other, http.MethodPost, path, `{"count":2}`)
+	if rec.Code != 404 {
+		t.Fatalf("ownership: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = e.serve(t, e.user, http.MethodPost, path, `{"count":2}`)
+	if rec.Code != 200 {
+		t.Fatalf("more: %d %s", rec.Code, rec.Body.String())
+	}
+}

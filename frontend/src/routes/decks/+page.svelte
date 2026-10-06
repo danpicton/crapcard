@@ -14,6 +14,7 @@
 
 	let creating = $state(false);
 	let newName = $state('');
+	let dailyNewLimit = $state<number | undefined>(undefined);
 	let newDescription = $state('');
 
 	async function load() {
@@ -47,7 +48,7 @@
 
 		error = null;
 		try {
-			await api.createDeck(name, newDescription.trim());
+			await api.createDeck(name, newDescription.trim(), dailyNewLimit ?? -1);
 			newName = '';
 			newDescription = '';
 			creating = false;
@@ -89,6 +90,9 @@
 			Description
 			<input bind:value={newDescription} placeholder="verbs and vocab" />
 		</label>
+		<label>New cards / day
+			<input type="number" min="0" max="100000" step="1" bind:value={dailyNewLimit} placeholder="Unlimited" />
+		</label>
 		<button type="submit" class="primary">Create</button>
 	</form>
 {/if}
@@ -119,7 +123,7 @@
 					{#if row.counts && row.counts.total > 0}
 						<a class="primary button" href="/decks/{row.deck.id}/study">Study</a>
 					{:else if row.counts}
-						<span class="muted small">Nothing due</span>
+						<a class="button" href="/decks/{row.deck.id}/study">Study</a>
 					{:else}
 						<!-- The counts call failed; claiming "nothing due" would be a lie. -->
 						<span class="muted small">Counts unavailable</span>
